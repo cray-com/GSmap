@@ -25,12 +25,15 @@ export function loadRecents(): RecentLocation[] {
   }
 }
 
+// Two entries refer to the same place when their coordinates are within this
+// tolerance (~1m). The label is intentionally ignored so the same location
+// searched or selected again does not create a duplicate entry.
+const SAME_LOCATION_EPS = 1e-5;
+
 function locationsMatch(a: RecentLocation, b: RecentInput): boolean {
-  const eps = 1e-5;
   return (
-    Math.abs(a.lat - b.lat) < eps &&
-    Math.abs(a.lon - b.lon) < eps &&
-    a.label === b.label
+    Math.abs(a.lat - b.lat) < SAME_LOCATION_EPS &&
+    Math.abs(a.lon - b.lon) < SAME_LOCATION_EPS
   );
 }
 

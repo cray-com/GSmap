@@ -6,11 +6,15 @@ illustration tool.
 
 - Search by place name (Nominatim) or by coordinates
 - Pan/zoom the map and select a rectangular area (Shift + drag)
-- Fetch real OSM vector data for the selection (Overpass API)
-- Export an SVG with grouped layers: `roads`, `water`, `parks`, `buildings`,
-  plus a `background` rect
-- Light / dark themes with primary & secondary color customization. The same
-  tokens drive both the preview tinting and the exported SVG fills/strokes
+- Adjust the selection after drawing: drag the edge/corner handles to resize,
+  drag the interior to move, then **Accept** or **Revert**
+- Five map styles (Positron, Dark, Liberty, Bright, Fiord) with per-style
+  overrides for **roads**, **buildings**, and **background** colors
+- Export a high-fidelity SVG that mirrors what you see on screen — colors,
+  line widths, layer order and clipping are derived from the live map style,
+  not a fixed re-styling
+- Export a PNG raster of the selection (1×/2×/3×)
+- History of your last 5 searches, coordinates and selections (stored locally)
 - 100% open source, all dependencies and data sources are commercial-use
   friendly (subject to each service's usage policy — see below)
 
@@ -18,12 +22,14 @@ illustration tool.
 
 - React + TypeScript + Vite (MIT)
 - MapLibre GL JS (BSD-3) for the interactive map
-- OpenStreetMap raster tiles for the preview (ODbL)
+- OpenFreeMap vector tiles + OpenMapTiles styles for the basemap (MIT styles,
+  ODbL data)
 - Nominatim for name search (ODbL data; OSMF service)
-- Overpass API for vector data (ODbL data)
 
-No backend is required for development. The browser calls Nominatim and
-Overpass directly.
+No backend is required. The app runs entirely in the browser; the only network
+calls are the basemap tiles (OpenFreeMap) and, when you search by name,
+Nominatim. **The SVG export is generated fully client-side from the already
+loaded map style — it makes no additional network request.**
 
 ## Run locally
 
@@ -43,29 +49,41 @@ yarn preview
 
 ## Usage
 
-1. Search for a place by name, or paste `lat, lon` and press Go.
+1. Search for a place by name, paste `lat, lon` and press Go, or just pan/zoom.
 2. Hold **Shift** and drag a rectangle on the map.
-3. Pick a theme; optionally tweak primary/secondary colors.
-4. Click **Export SVG** — gsmap fetches Overpass vector data for the bounding
-   box and downloads an SVG.
-5. Open the SVG in your vector editor of choice. Layers are grouped by type
-   so you can edit them independently.
+3. Fine-tune the selection: drag the handles on the edges/corners to resize,
+   drag inside the box to move it, then click **Accept** (or **Revert** to
+   undo your adjustments). Clicking an accepted selection re-opens editing.
+4. Pick a map style; optionally override the roads, buildings, and background
+   colors. Toggle labels or buildings off if you want a cleaner export.
+5. Click **Local SVG** to download the vector export, or **Export PNG** for a
+   raster image.
+6. Open the SVG in your vector editor of choice. Each map-style layer is a
+   separate `<g>` so you can edit them independently.
 
 ## SVG structure
+
+The export walks the live map style's layers in render order, resolving each
+layer's real paint (color, width, opacity, dash) at the current zoom. The
+result is one `<g>` per style layer, clipped to the exact selection rectangle:
 
 ```
 <svg>
   <metadata>Map data © OpenStreetMap contributors, ODbL.</metadata>
+  <defs><clipPath id="bbox">…</clipPath></defs>
   <rect id="background" .../>
-  <g id="water" ...>...</g>
-  <g id="parks" ...>...</g>
-  <g id="buildings" ...>...</g>
-  <g id="roads" ...>...</g>
+  <g clip-path="url(#bbox)">
+    <g id="water" .../>
+    <g id="landuse_residential" .../>
+    <g id="building" .../>
+    <g id="road_major" .../>
+    …
+  </g>
 </svg>
 ```
 
-Coordinates are projected with Web Mercator and normalized to the SVG
-`viewBox` so the file is resolution-independent.
+Geometry is projected with the same projection as the on-screen map (screen
+pixels), so stroke widths map 1:1 and the SVG matches the preview.
 
 ## Licensing & attribution
 
@@ -74,17 +92,17 @@ Coordinates are projected with Web Mercator and normalized to the SVG
   [Open Database License (ODbL)](https://www.openstreetmap.org/copyright).
   The exported SVG embeds a `<metadata>` attribution element. When publishing
   artwork derived from these exports, keep an OSM credit visible.
-- Tile and Nominatim/Overpass requests go to the public OpenStreetMap
-  Foundation services. **Their usage policies forbid heavy automated or
-  high-volume commercial use.** For production at scale, switch to a
-  self-hosted Overpass + Nominatim, or a commercial OSM-based provider.
+- The basemap is served by OpenFreeMap (MIT styles, OpenMapTiles schema) and
+  name search by the OpenStreetMap Foundation's Nominatim. **Their usage
+  policies forbid heavy automated or high-volume use.** For production at
+  scale, switch to a self-hosted basemap + Nominatim, or a commercial
+  OSM-based provider.
 
 ## Notes & limitations
 
-- Multipolygon water/parks are assembled with a best-effort heuristic; very
-  complex polygons (rivers with islands, donut parks) may render with minor
-  topology issues.
-- Labels are not exported (positioning OSM labels into a clean SVG is its own
-  problem). The `labels` token exists for future use.
-- For very large bounding boxes, Overpass may time out — pick smaller areas
-  for clean exports.
+- Text labels (`symbol` layers) are not vectorized: their on-screen positions
+  come from a runtime collision engine that has no faithful SVG equivalent.
+- Image-based fills/lines (`fill-pattern`, `line-pattern`), if a style uses
+  them, fall back to the resolved solid color.
+- Data-driven paint that varies within a single style layer is approximated
+  from the layer's first feature.

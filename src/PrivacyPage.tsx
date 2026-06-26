@@ -142,8 +142,10 @@ function ContentPtBR({ onBack }: { onBack: () => void }) {
 
       <h2 id="external-services">Serviços externos</h2>
       <p>
-        Para funcionar, o app faz requisições a três serviços públicos. Em cada caso,
-        apenas o mínimo necessário é enviado.
+        Para funcionar, o app faz requisições a dois serviços públicos. Em cada caso,
+        apenas o mínimo necessário é enviado. A exportação em SVG é gerada
+        inteiramente no seu navegador, a partir do mapa já carregado, e{" "}
+        <strong>não envia nenhum dado a nenhum servidor</strong>.
       </p>
 
       <div className="license-tool-list">
@@ -163,25 +165,10 @@ function ContentPtBR({ onBack }: { onBack: () => void }) {
         </section>
 
         <section className="license-tool-card">
-          <h3>Overpass API — dados vetoriais</h3>
-          <p>
-            Quando você exporta em SVG, o app consulta a Overpass API para obter os
-            dados geográficos da área selecionada (ruas, água, parques, edifícios).
-          </p>
-          <p><strong>Dado enviado:</strong> as coordenadas da área selecionada (bounding box).</p>
-          <p><strong>Quem opera:</strong> overpass-api.de (serviço público da comunidade OSM).</p>
-          <p>
-            <a href="https://overpass-api.de" target="_blank" rel="noreferrer">
-              overpass-api.de
-            </a>
-          </p>
-        </section>
-
-        <section className="license-tool-card">
           <h3>OpenFreeMap — tiles do mapa</h3>
           <p>
             O mapa visual exibido na tela é carregado do OpenFreeMap, que serve os
-            tiles (blocos de imagem/vetor) conforme você navega.
+            tiles vetoriais conforme você navega.
           </p>
           <p><strong>Dado enviado:</strong> a posição e o zoom da câmera do mapa (comportamento padrão de qualquer app de mapas).</p>
           <p><strong>Quem opera:</strong> OpenFreeMap (projeto open-source).</p>
@@ -197,9 +184,9 @@ function ContentPtBR({ onBack }: { onBack: () => void }) {
       <p>O app salva duas coisas no <code>localStorage</code> do seu navegador:</p>
       <ul>
         <li>
-          <strong>Histórico de locais:</strong> coordenadas e nomes de buscas recentes,
-          para facilitar revisitar locais. Esses dados ficam apenas no seu dispositivo e
-          nunca saem dele.
+          <strong>Histórico de locais:</strong> coordenadas e nomes de buscas, coordenadas
+          e seleções recentes, para facilitar revisitar locais. Esses dados ficam apenas
+          no seu dispositivo e nunca saem dele.
         </li>
         <li>
           <strong>Preferência de tema:</strong> se você usa o modo claro ou escuro.
@@ -256,8 +243,10 @@ function ContentEnUS({ onBack }: { onBack: () => void }) {
 
       <h2 id="external-services">External services</h2>
       <p>
-        To function, the app makes requests to three public services. In each case,
-        only the minimum necessary data is sent.
+        To function, the app makes requests to two public services. In each case,
+        only the minimum necessary data is sent. The SVG export is generated
+        entirely in your browser from the already-loaded map and{" "}
+        <strong>sends no data to any server</strong>.
       </p>
 
       <div className="license-tool-list">
@@ -277,25 +266,10 @@ function ContentEnUS({ onBack }: { onBack: () => void }) {
         </section>
 
         <section className="license-tool-card">
-          <h3>Overpass API — vector data</h3>
-          <p>
-            When you export as SVG, the app queries the Overpass API to fetch
-            geographic data for the selected area (streets, water, parks, buildings).
-          </p>
-          <p><strong>Data sent:</strong> the coordinates of the selected area (bounding box).</p>
-          <p><strong>Operated by:</strong> overpass-api.de (public OSM community service).</p>
-          <p>
-            <a href="https://overpass-api.de" target="_blank" rel="noreferrer">
-              overpass-api.de
-            </a>
-          </p>
-        </section>
-
-        <section className="license-tool-card">
           <h3>OpenFreeMap — map tiles</h3>
           <p>
             The visual map displayed on screen is loaded from OpenFreeMap, which
-            serves tiles as you navigate.
+            serves vector tiles as you navigate.
           </p>
           <p><strong>Data sent:</strong> the map camera position and zoom level (standard behaviour for any map app).</p>
           <p><strong>Operated by:</strong> OpenFreeMap (open-source project).</p>
@@ -312,8 +286,8 @@ function ContentEnUS({ onBack }: { onBack: () => void }) {
       <ul>
         <li>
           <strong>Location history:</strong> coordinates and names from recent searches,
-          to make revisiting places easier. This data stays on your device only and
-          never leaves it.
+          coordinates and selections, to make revisiting places easier. This data stays
+          on your device only and never leaves it.
         </li>
         <li>
           <strong>Theme preference:</strong> whether you use light or dark mode.

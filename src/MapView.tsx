@@ -1,15 +1,24 @@
-import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import maplibregl, { Map as MlMap, LngLatBoundsLike } from "maplibre-gl";
 import type { BBox, Geometry, LayerKind, LngLat } from "./types";
 import { getStyleDef, type MapStyleId } from "./theme";
-import type { ProjectedFeatureSet } from "./svg";
+import type { StyledFeatureSet, StyledLayer, StyledPath } from "./svg";
+import { evaluatePaint, colorToCss, clearStyleResolveCache } from "./styleResolve";
 
 export type MapHandle = {
   flyTo: (lng: number, lat: number, zoom?: number) => void;
   fitBbox: (bbox: BBox) => void;
   clearSelection: () => void;
-  getProjectedFeatureSetForBbox: (bbox: BBox) => ProjectedFeatureSet | null;
+  acceptEdit: () => void;
+  revertEdit: () => void;
+  getStyledFeatureSetForBbox: (bbox: BBox) => Promise<StyledFeatureSet | null>;
   captureSelectedPng: (bbox: BBox, scale: 1 | 2 | 3) => Promise<Blob>;
+};
+
+type EditLabels = {
+  accept: string;
+  revert: string;
+  hint: string;
 };
 
 type Props = {
@@ -17,23 +26,45 @@ type Props = {
   hideLabels: boolean;
   hideBuildings: boolean;
   roadsColor: string | null;
+  buildingsColor: string | null;
+  backgroundColor: string | null;
+  editLabels: EditLabels;
   onSelect: (bbox: BBox | null) => void;
+  onAcceptSelection: (bbox: BBox) => void;
 };
 
+// Pixel anchor (relative to the map container) used to position the
+// floating edit bar just below the selection box.
+type EditBarAnchor = { left: number; top: number };
+
+// Drag roles for the 8 resize handles: 4 corners + 4 edge midpoints.
+type HandleRole = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+const HANDLE_ROLES: HandleRole[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
 export const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { styleId, hideLabels, hideBuildings, roadsColor, onSelect },
+  { styleId, hideLabels, hideBuildings, roadsColor, buildingsColor, backgroundColor, editLabels, onSelect, onAcceptSelection },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<SelectionEditor | null>(null);
+  const [editBarAnchor, setEditBarAnchor] = useState<EditBarAnchor | null>(null);
+  const editLabelsRef = useRef(editLabels);
+  editLabelsRef.current = editLabels;
   const mapRef = useRef<MlMap | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onAcceptSelectionRef = useRef(onAcceptSelection);
+  onAcceptSelectionRef.current = onAcceptSelection;
   const hideLabelsRef = useRef(hideLabels);
   hideLabelsRef.current = hideLabels;
   const hideBuildingsRef = useRef(hideBuildings);
   hideBuildingsRef.current = hideBuildings;
   const roadsColorRef = useRef(roadsColor);
   roadsColorRef.current = roadsColor;
+  const buildingsColorRef = useRef(buildingsColor);
+  buildingsColorRef.current = buildingsColor;
+  const backgroundColorRef = useRef(backgroundColor);
+  backgroundColorRef.current = backgroundColor;
 
   const selectingRef = useRef(false);
   const startPxRef = useRef<{ x: number; y: number } | null>(null);
@@ -54,6 +85,14 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     mapRef.current = map;
 
     const canvas = map.getCanvasContainer();
+
+    const editor = new SelectionEditor({
+      map,
+      canvas,
+      onChange: (bbox) => onSelectRef.current(bbox),
+      onAnchorChange: setEditBarAnchor,
+    });
+    editorRef.current = editor;
 
     const onMouseDown = (e: MouseEvent) => {
       if (!e.shiftKey) return;
@@ -121,12 +160,44 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       };
       drawBbox(map, bbox);
       onSelectRef.current(bbox);
+      editor.beginEdit(bbox);
     };
 
     canvas.addEventListener("mousedown", onMouseDown);
 
+    // Click an already-accepted selection to re-enter edit mode.
+    const onSelectionClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (e.originalEvent.shiftKey || editor.isEditing() || !storedBbox) return;
+      editor.beginEdit(storedBbox);
+    };
+    map.on("click", SELECTION_FILL, onSelectionClick);
+
+    // While editing, dragging over the box interior pans the whole selection.
+    const onSelectionMouseDown = (e: maplibregl.MapLayerMouseEvent) => {
+      if (e.originalEvent.shiftKey || !editor.isEditing()) return;
+      e.preventDefault();
+      editor.beginMove(e.originalEvent);
+    };
+    map.on("mousedown", SELECTION_FILL, onSelectionMouseDown);
+
+    // Cursor hint: pointer when clickable, grab while editing the box body.
+    const onSelectionEnter = () => {
+      canvas.style.cursor = editor.isEditing() ? "grab" : "pointer";
+    };
+    const onSelectionLeave = () => {
+      canvas.style.cursor = "";
+    };
+    map.on("mouseenter", SELECTION_FILL, onSelectionEnter);
+    map.on("mouseleave", SELECTION_FILL, onSelectionLeave);
+
     return () => {
       canvas.removeEventListener("mousedown", onMouseDown);
+      map.off("click", SELECTION_FILL, onSelectionClick);
+      map.off("mousedown", SELECTION_FILL, onSelectionMouseDown);
+      map.off("mouseenter", SELECTION_FILL, onSelectionEnter);
+      map.off("mouseleave", SELECTION_FILL, onSelectionLeave);
+      editor.destroy();
+      editorRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -139,12 +210,18 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     if (!map) return;
     const def = getStyleDef(styleId);
     originalRoadColors.delete(map);
+    originalBuildingColors.delete(map);
+    originalBackgroundColors.delete(map);
+    // Paint expressions differ per style; drop the resolver cache.
+    clearStyleResolveCache();
     map.once("styledata", () => {
       if (mapRef.current) {
         redrawStoredBbox(mapRef.current);
         applyLabelVisibility(mapRef.current, hideLabelsRef.current);
         applyBuildingVisibility(mapRef.current, hideBuildingsRef.current);
         applyRoadsColor(mapRef.current, roadsColorRef.current);
+        applyBuildingsColor(mapRef.current, buildingsColorRef.current);
+        applyBackgroundColor(mapRef.current, backgroundColorRef.current);
       }
     });
     map.setStyle(def.styleUrl);
@@ -166,6 +243,8 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    // Road color override mutates layer paint; invalidate the resolver cache.
+    clearStyleResolveCache();
     if (map.isStyleLoaded()) {
       applyRoadsColor(map, roadsColor);
     } else {
@@ -174,6 +253,34 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       });
     }
   }, [roadsColor]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    // Building color override mutates layer paint; invalidate the resolver cache.
+    clearStyleResolveCache();
+    if (map.isStyleLoaded()) {
+      applyBuildingsColor(map, buildingsColor);
+    } else {
+      map.once("styledata", () => {
+        if (mapRef.current) applyBuildingsColor(mapRef.current, buildingsColor);
+      });
+    }
+  }, [buildingsColor]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    // Background color override mutates layer paint; invalidate the resolver cache.
+    clearStyleResolveCache();
+    if (map.isStyleLoaded()) {
+      applyBackgroundColor(map, backgroundColor);
+    } else {
+      map.once("styledata", () => {
+        if (mapRef.current) applyBackgroundColor(mapRef.current, backgroundColor);
+      });
+    }
+  }, [backgroundColor]);
 
   useImperativeHandle(ref, () => ({
     flyTo(lng, lat, zoom) {
@@ -185,73 +292,30 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
         [bbox.east, bbox.north],
       ];
       mapRef.current?.fitBounds(bounds, { padding: 60, duration: 600 });
+      editorRef.current?.endEdit();
       if (mapRef.current) drawBbox(mapRef.current, bbox);
     },
     clearSelection() {
       const map = mapRef.current;
       if (!map) return;
+      editorRef.current?.endEdit();
       clearBbox(map);
     },
-    getProjectedFeatureSetForBbox(bbox) {
+    acceptEdit() {
+      editorRef.current?.endEdit();
+    },
+    revertEdit() {
+      editorRef.current?.revert();
+    },
+    getStyledFeatureSetForBbox(bbox) {
       const map = mapRef.current;
-      if (!map) return null;
-      return buildProjectedFeatureSetForBbox(map, bbox);
+      if (!map) return Promise.resolve(null);
+      return buildStyledFeatureSetForBbox(map, bbox, editorRef.current);
     },
     captureSelectedPng(bbox, scale) {
       const map = mapRef.current;
       if (!map) return Promise.reject(new Error("Map is not ready"));
-
-      const originalPixelRatio = window.devicePixelRatio;
-      const targetPixelRatio = originalPixelRatio * scale;
-
-      const hasSelectionLayers =
-        map.getLayer(SELECTION_FILL) && map.getLayer(SELECTION_LINE);
-
-      const restoreAndCrop = (): Promise<Blob> => {
-        const sourceCanvas = map.getCanvas();
-        // At targetPixelRatio the canvas physical size is scaled up.
-        // CSS crop coords stay in logical pixels so we scale them here.
-        const crop = getCanvasCropForBbox(map, bbox);
-        const ratio = sourceCanvas.width / sourceCanvas.clientWidth;
-        const srcX = Math.round(crop.x * ratio);
-        const srcY = Math.round(crop.y * ratio);
-        const srcW = Math.max(1, Math.round(crop.width * ratio));
-        const srcH = Math.max(1, Math.round(crop.height * ratio));
-
-        const out = document.createElement("canvas");
-        out.width = srcW;
-        out.height = srcH;
-        const ctx = out.getContext("2d");
-        if (!ctx) return Promise.reject(new Error("Canvas export is not available"));
-        ctx.drawImage(sourceCanvas, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
-
-        // Restore original pixel ratio immediately after reading the canvas.
-        map.setPixelRatio(originalPixelRatio);
-        if (hasSelectionLayers) {
-          map.setLayoutProperty(SELECTION_FILL, "visibility", "visible");
-          map.setLayoutProperty(SELECTION_LINE, "visibility", "visible");
-        }
-
-        return new Promise<Blob>((resolve, reject) => {
-          out.toBlob((blob) => {
-            if (!blob) { reject(new Error("PNG export failed")); return; }
-            resolve(blob);
-          }, "image/png");
-        });
-      };
-
-      if (hasSelectionLayers) {
-        map.setLayoutProperty(SELECTION_FILL, "visibility", "none");
-        map.setLayoutProperty(SELECTION_LINE, "visibility", "none");
-      }
-
-      // Bump pixel ratio so MapLibre re-renders at the target resolution,
-      // then capture on the next rendered frame.
-      map.setPixelRatio(targetPixelRatio);
-      return new Promise((resolve, reject) => {
-        map.once("render", () => restoreAndCrop().then(resolve, reject));
-        map.triggerRepaint();
-      });
+      return captureSelectedPng(map, bbox, scale, editorRef.current);
     },
   }));
 
@@ -261,6 +325,34 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       <div className="help">
         Hold <span className="kbd">Shift</span> and drag to select an area
       </div>
+      {editBarAnchor && (
+        <div
+          className="selection-edit-bar"
+          style={{ left: editBarAnchor.left, top: editBarAnchor.top }}
+        >
+          <span className="selection-edit-hint">{editLabels.hint}</span>
+          <div className="selection-edit-actions">
+            <button
+              type="button"
+              className="mini-action"
+              onClick={() => editorRef.current?.revert()}
+            >
+              {editLabels.revert}
+            </button>
+            <button
+              type="button"
+              className="mini-action mini-action--accent"
+              onClick={() => {
+                const accepted = editorRef.current?.getCurrentBbox();
+                if (accepted) onAcceptSelectionRef.current(accepted);
+                editorRef.current?.endEdit();
+              }}
+            >
+              {editLabels.accept}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -326,19 +418,117 @@ function applyRoadsColor(map: MlMap, color: string | null) {
   });
 }
 
+// Built-up landuse classes whose fill visually reads as "buildings" (they share
+// the buildings' light grey tone). Parks, cemeteries, schools and sports pitches
+// are intentionally excluded so green areas stay visible.
+const BUILT_UP_LANDUSE_TERMS = [
+  "residential",
+  "suburb",
+  "neighbourhood",
+  "commercial",
+  "industrial",
+];
+
+// Id/source-layer fragments that denote actual building geometry, in any of its
+// forms (fill, 3D extrusion, outline/casing lines, tops).
+const BUILDING_TERMS = ["building", "house", "structure"];
+
+// Any layer that draws building geometry, regardless of render type — so a
+// style's building outline (line) or 3D top is hidden together with the fill.
+function isBuildingLayer(layerId: string, sourceLayer: string): boolean {
+  if (sourceLayer === "building") return true;
+  return BUILDING_TERMS.some((term) => layerId.includes(term));
+}
+
+// Fill polygons that look like buildings without being the building layer
+// itself (built-up landuse, airport pavement).
+function isBuildingLikeFill(layerId: string, sourceLayer: string): boolean {
+  if (sourceLayer === "aeroway" || layerId.includes("aeroway")) return true;
+  if (sourceLayer === "landuse" || layerId.includes("landuse")) {
+    return BUILT_UP_LANDUSE_TERMS.some((term) => layerId.includes(term));
+  }
+  return false;
+}
+
 function applyBuildingVisibility(map: MlMap, hide: boolean) {
   const visibility = hide ? "none" : "visible";
   map.getStyle().layers.forEach((layer) => {
     const layerId = layer.id.toLowerCase();
     const sourceLayer = "source-layer" in layer ? String(layer["source-layer"] ?? "").toLowerCase() : "";
+
+    // Building geometry in any render type (fill / fill-extrusion / line).
+    const isBuilding =
+      (layer.type === "fill" || layer.type === "fill-extrusion" || layer.type === "line") &&
+      isBuildingLayer(layerId, sourceLayer);
+
+    // Building-like fills only apply to filled polygons.
+    const isLikeFill =
+      (layer.type === "fill" || layer.type === "fill-extrusion") &&
+      isBuildingLikeFill(layerId, sourceLayer);
+
+    if (!isBuilding && !isLikeFill) return;
+    map.setLayoutProperty(layer.id, "visibility", visibility);
+  });
+}
+
+// Snapshot original building fill so clearing the override restores the
+// style's authentic palette, mirroring originalRoadColors.
+const originalBuildingColors = new WeakMap<MlMap, Map<string, unknown>>();
+
+function applyBuildingsColor(map: MlMap, color: string | null) {
+  let snapshot = originalBuildingColors.get(map);
+  if (!snapshot) {
+    snapshot = new Map();
+    originalBuildingColors.set(map, snapshot);
+  }
+
+  map.getStyle().layers.forEach((layer) => {
+    if (layer.type !== "fill" && layer.type !== "fill-extrusion") return;
+    const layerId = layer.id.toLowerCase();
+    const sourceLayer = "source-layer" in layer ? String(layer["source-layer"] ?? "").toLowerCase() : "";
     const isBuildingLayer =
       sourceLayer === "building" ||
       layerId.includes("building") ||
-      layerId.includes("buildings") ||
       layerId.includes("3d-buildings");
-
     if (!isBuildingLayer) return;
-    map.setLayoutProperty(layer.id, "visibility", visibility);
+
+    const colorProp = layer.type === "fill-extrusion" ? "fill-extrusion-color" : "fill-color";
+
+    if (!snapshot!.has(layer.id)) {
+      snapshot!.set(layer.id, map.getPaintProperty(layer.id, colorProp));
+    }
+
+    if (color) {
+      map.setPaintProperty(layer.id, colorProp, color);
+    } else {
+      map.setPaintProperty(layer.id, colorProp, snapshot!.get(layer.id));
+    }
+  });
+}
+
+// Snapshot original background-color so clearing the override restores the
+// style's authentic backdrop, mirroring originalRoadColors.
+const originalBackgroundColors = new WeakMap<MlMap, Map<string, unknown>>();
+
+function applyBackgroundColor(map: MlMap, color: string | null) {
+  let snapshot = originalBackgroundColors.get(map);
+  if (!snapshot) {
+    snapshot = new Map();
+    originalBackgroundColors.set(map, snapshot);
+  }
+
+  map.getStyle().layers.forEach((layer) => {
+    if (layer.type !== "background") return;
+
+    if (!snapshot!.has(layer.id)) {
+      snapshot!.set(layer.id, map.getPaintProperty(layer.id, "background-color"));
+    }
+
+    if (color) {
+      map.setPaintProperty(layer.id, "background-color", color);
+    } else {
+      map.setPaintProperty(layer.id, "background-color", snapshot!.get(layer.id));
+    }
   });
 }
 
@@ -360,31 +550,315 @@ function drawBbox(map: MlMap, bbox: BBox) {
       ],
     },
   };
-  const apply = () => {
-    const src = map.getSource(SELECTION_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (src) {
-      src.setData(data);
-    } else {
-      map.addSource(SELECTION_SOURCE, { type: "geojson", data });
+  const apply = (): boolean => {
+    try {
+      const src = map.getSource(SELECTION_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(data);
+      } else {
+        map.addSource(SELECTION_SOURCE, { type: "geojson", data });
+      }
+
+      // Add layers independently of the source: a style swap drops layers but
+      // a stale source reference could otherwise leave us with no visible box.
       const accent =
         getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() ||
         "#0f766e";
-      map.addLayer({
-        id: SELECTION_FILL,
-        type: "fill",
-        source: SELECTION_SOURCE,
-        paint: { "fill-color": accent, "fill-opacity": 0.14 },
-      });
-      map.addLayer({
-        id: SELECTION_LINE,
-        type: "line",
-        source: SELECTION_SOURCE,
-        paint: { "line-color": accent, "line-width": 2, "line-dasharray": [3, 2] },
-      });
+      if (!map.getLayer(SELECTION_FILL)) {
+        map.addLayer({
+          id: SELECTION_FILL,
+          type: "fill",
+          source: SELECTION_SOURCE,
+          paint: { "fill-color": accent, "fill-opacity": 0.14 },
+        });
+      }
+      if (!map.getLayer(SELECTION_LINE)) {
+        map.addLayer({
+          id: SELECTION_LINE,
+          type: "line",
+          source: SELECTION_SOURCE,
+          paint: { "line-color": accent, "line-width": 2, "line-dasharray": [3, 2] },
+        });
+      }
+      return true;
+    } catch {
+      // Style not ready yet (e.g. mid style-swap); retry later.
+      return false;
     }
   };
-  if (map.isStyleLoaded()) apply();
-  else map.once("styledata", apply);
+
+  // isStyleLoaded() is unreliable right after pan/zoom, so attempt immediately
+  // and retry once the map is idle if the style wasn't ready.
+  if (!apply()) {
+    map.once("idle", () => {
+      if (apply()) onBboxRedrawn?.();
+    });
+  }
+}
+
+// Lets the active editor re-layout its handles after a deferred bbox draw.
+let onBboxRedrawn: (() => void) | null = null;
+
+// Gap in pixels between the bottom of the selection box and the edit bar.
+const EDIT_BAR_GAP = 12;
+// Half-size of a resize handle, used to center it on its anchor point.
+const HANDLE_HALF = 6;
+// CSS cursor per handle role, conveying the resize direction.
+const HANDLE_CURSORS: Record<HandleRole, string> = {
+  nw: "nwse-resize",
+  n: "ns-resize",
+  ne: "nesw-resize",
+  e: "ew-resize",
+  se: "nwse-resize",
+  s: "ns-resize",
+  sw: "nesw-resize",
+  w: "ew-resize",
+};
+
+type SelectionEditorOptions = {
+  map: MlMap;
+  canvas: HTMLElement;
+  onChange: (bbox: BBox) => void;
+  onAnchorChange: (anchor: EditBarAnchor | null) => void;
+};
+
+/**
+ * Owns the interactive editing of a selection box: 8 resize handles, their
+ * drag behavior, reprojection on map move/zoom, and the accept/revert
+ * lifecycle. The box geometry lives in geographic coordinates (BBox) while the
+ * handles are pixel-positioned DOM nodes, so every map movement reprojects
+ * them via map.project().
+ */
+class SelectionEditor {
+  private readonly map: MlMap;
+  private readonly canvas: HTMLElement;
+  private readonly onChange: (bbox: BBox) => void;
+  private readonly onAnchorChange: (anchor: EditBarAnchor | null) => void;
+
+  private handles: Map<HandleRole, HTMLDivElement> = new Map();
+  private editing = false;
+  private originalBbox: BBox | null = null;
+  private currentBbox: BBox | null = null;
+  private activeRole: HandleRole | null = null;
+  // When panning the whole box: pointer start and box snapshot at grab time.
+  private moveAnchor: { px: number; py: number; bbox: BBox } | null = null;
+
+  constructor({ map, canvas, onChange, onAnchorChange }: SelectionEditorOptions) {
+    this.map = map;
+    this.canvas = canvas;
+    this.onChange = onChange;
+    this.onAnchorChange = onAnchorChange;
+    this.layout = this.layout.bind(this);
+    this.onDragMove = this.onDragMove.bind(this);
+    this.onDragEnd = this.onDragEnd.bind(this);
+  }
+
+  beginEdit(bbox: BBox) {
+    this.originalBbox = { ...bbox };
+    this.currentBbox = { ...bbox };
+    if (!this.editing) {
+      this.editing = true;
+      this.createHandles();
+      this.map.on("move", this.layout);
+      // Re-layout if the selection box is (re)drawn after a deferred apply.
+      onBboxRedrawn = this.layout;
+    }
+    this.layout();
+  }
+
+  /** Restore the box captured when editing started, keeping the selection. */
+  revert() {
+    if (!this.originalBbox) return;
+    this.currentBbox = { ...this.originalBbox };
+    drawBbox(this.map, this.currentBbox);
+    this.onChange(this.currentBbox);
+    this.layout();
+  }
+
+  /** Confirm the current box and tear down the editing UI. */
+  endEdit() {
+    if (!this.editing) return;
+    this.editing = false;
+    this.map.off("move", this.layout);
+    if (onBboxRedrawn === this.layout) onBboxRedrawn = null;
+    this.removeDragListeners();
+    this.destroyHandles();
+    this.originalBbox = null;
+    this.currentBbox = null;
+    this.activeRole = null;
+    this.moveAnchor = null;
+    this.onAnchorChange(null);
+  }
+
+  destroy() {
+    this.endEdit();
+  }
+
+  isEditing() {
+    return this.editing;
+  }
+
+  /**
+   * Temporarily hide the handles + edit bar and stop tracking map movement.
+   * Used while an export reframes the camera, so the handles don't follow the
+   * transient fitBounds/jumpTo and flicker. No-op when not editing.
+   */
+  suspend() {
+    if (!this.editing) return;
+    this.map.off("move", this.layout);
+    for (const handle of this.handles.values()) handle.style.display = "none";
+    this.onAnchorChange(null);
+  }
+
+  /** Re-show the handles + edit bar and resume tracking after suspend(). */
+  resume() {
+    if (!this.editing) return;
+    for (const handle of this.handles.values()) handle.style.display = "";
+    this.map.on("move", this.layout);
+    this.layout();
+  }
+
+  getCurrentBbox(): BBox | null {
+    return this.currentBbox;
+  }
+
+  /** Start panning the whole box from a mousedown over its interior. */
+  beginMove(event: MouseEvent) {
+    if (!this.editing || !this.currentBbox) return;
+    const rect = this.canvas.getBoundingClientRect();
+    this.moveAnchor = {
+      px: event.clientX - rect.left,
+      py: event.clientY - rect.top,
+      bbox: { ...this.currentBbox },
+    };
+    this.map.dragPan.disable();
+    window.addEventListener("mousemove", this.onDragMove);
+    window.addEventListener("mouseup", this.onDragEnd);
+  }
+
+  private createHandles() {
+    for (const role of HANDLE_ROLES) {
+      const handle = document.createElement("div");
+      handle.className = "selection-handle";
+      handle.dataset.role = role;
+      handle.style.cursor = HANDLE_CURSORS[role];
+      handle.addEventListener("mousedown", this.onDragStart);
+      this.canvas.appendChild(handle);
+      this.handles.set(role, handle);
+    }
+  }
+
+  private destroyHandles() {
+    for (const handle of this.handles.values()) {
+      handle.removeEventListener("mousedown", this.onDragStart);
+      handle.remove();
+    }
+    this.handles.clear();
+  }
+
+  /** Reproject the current box to pixels and position handles + edit bar. */
+  private layout() {
+    if (!this.currentBbox) return;
+    const { west, east, south, north } = this.currentBbox;
+    const midLng = (west + east) / 2;
+    const midLat = (south + north) / 2;
+    const points: Record<HandleRole, [number, number]> = {
+      nw: [west, north],
+      n: [midLng, north],
+      ne: [east, north],
+      e: [east, midLat],
+      se: [east, south],
+      s: [midLng, south],
+      sw: [west, south],
+      w: [west, midLat],
+    };
+
+    let maxY = -Infinity;
+    let sumX = 0;
+    for (const role of HANDLE_ROLES) {
+      const handle = this.handles.get(role);
+      if (!handle) continue;
+      const p = this.map.project(points[role]);
+      handle.style.left = `${p.x - HANDLE_HALF}px`;
+      handle.style.top = `${p.y - HANDLE_HALF}px`;
+      maxY = Math.max(maxY, p.y);
+      if (role === "n" || role === "s") sumX += p.x;
+    }
+
+    // Anchor the edit bar below the box, horizontally centered on the box.
+    this.onAnchorChange({ left: sumX / 2, top: maxY + EDIT_BAR_GAP });
+  }
+
+  private onDragStart = (event: MouseEvent) => {
+    const target = event.currentTarget as HTMLDivElement;
+    const role = target.dataset.role as HandleRole | undefined;
+    if (!role || !this.currentBbox) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.activeRole = role;
+    this.map.dragPan.disable();
+    window.addEventListener("mousemove", this.onDragMove);
+    window.addEventListener("mouseup", this.onDragEnd);
+  };
+
+  private onDragMove(event: MouseEvent) {
+    if (!this.currentBbox) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+
+    // Box panning: translate the whole box by the pointer's geographic delta.
+    if (this.moveAnchor) {
+      const from = this.map.unproject([this.moveAnchor.px, this.moveAnchor.py]);
+      const to = this.map.unproject([px, py]);
+      const dLng = to.lng - from.lng;
+      const dLat = to.lat - from.lat;
+      const base = this.moveAnchor.bbox;
+      this.currentBbox = {
+        west: base.west + dLng,
+        east: base.east + dLng,
+        south: base.south + dLat,
+        north: base.north + dLat,
+      };
+      drawBbox(this.map, this.currentBbox);
+      this.onChange(this.currentBbox);
+      this.layout();
+      return;
+    }
+
+    if (!this.activeRole) return;
+    const point = this.map.unproject([px, py]);
+
+    // Apply the pointer position only to the edges the role controls.
+    const next = { ...this.currentBbox };
+    if (this.activeRole.includes("n")) next.north = point.lat;
+    if (this.activeRole.includes("s")) next.south = point.lat;
+    if (this.activeRole.includes("e")) next.east = point.lng;
+    if (this.activeRole.includes("w")) next.west = point.lng;
+
+    // Normalize so the box never inverts when dragged past its opposite edge.
+    this.currentBbox = {
+      west: Math.min(next.west, next.east),
+      east: Math.max(next.west, next.east),
+      south: Math.min(next.south, next.north),
+      north: Math.max(next.south, next.north),
+    };
+    drawBbox(this.map, this.currentBbox);
+    this.onChange(this.currentBbox);
+    this.layout();
+  }
+
+  private onDragEnd() {
+    this.activeRole = null;
+    this.moveAnchor = null;
+    this.map.dragPan.enable();
+    this.removeDragListeners();
+  }
+
+  private removeDragListeners() {
+    window.removeEventListener("mousemove", this.onDragMove);
+    window.removeEventListener("mouseup", this.onDragEnd);
+  }
 }
 
 function clearBbox(map: MlMap) {
@@ -398,50 +872,286 @@ function clearBbox(map: MlMap) {
   }
 }
 
-function buildProjectedFeatureSetForBbox(map: MlMap, bbox: BBox): ProjectedFeatureSet {
+// Style layer types we can faithfully vectorize. fill-extrusion is flattened to
+// a fill; symbol/raster/etc. have no vector equivalent and are skipped.
+const VECTORIZABLE_LAYER_TYPES = new Set(["fill", "fill-extrusion", "line", "background"]);
+
+type StyleLayerLike = {
+  id: string;
+  type: string;
+  layout?: { visibility?: string };
+  minzoom?: number;
+  maxzoom?: number;
+};
+
+// Resolve once the map has finished moving and rendering (tiles loaded).
+function waitForIdle(map: MlMap): Promise<void> {
+  return new Promise((resolve) => map.once("idle", () => resolve()));
+}
+
+// MapLibre interaction handlers we disable while an export reframes the camera,
+// so the user cannot pan/zoom mid-capture and invalidate the restore.
+const INTERACTION_HANDLERS = [
+  "dragPan",
+  "scrollZoom",
+  "boxZoom",
+  "dragRotate",
+  "keyboard",
+  "doubleClickZoom",
+  "touchZoomRotate",
+] as const;
+
+/**
+ * Frame the bbox in the viewport, run `fn` once the map is idle, then restore
+ * the original camera. Interaction is locked for the duration and the active
+ * selection editor (if any) is suspended, so the capture is consistent and the
+ * handles don't follow the transient camera move.
+ *
+ * queryRenderedFeatures / the canvas only expose what is currently rasterized,
+ * so this framing is what lets off-screen selections export fully.
+ */
+async function withFramedBbox<T>(
+  map: MlMap,
+  bbox: BBox,
+  editor: SelectionEditor | null,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const original = {
+    center: map.getCenter(),
+    zoom: map.getZoom(),
+    bearing: map.getBearing(),
+    pitch: map.getPitch(),
+  };
+
+  // Lock interaction, remembering which handlers were enabled.
+  const wasEnabled = INTERACTION_HANDLERS.map((name) => {
+    const handler = map[name];
+    const enabled = handler.isEnabled();
+    if (enabled) handler.disable();
+    return enabled;
+  });
+  editor?.suspend();
+
+  map.fitBounds(
+    [
+      [bbox.west, bbox.south],
+      [bbox.east, bbox.north],
+    ],
+    { padding: 40, animate: false, bearing: original.bearing, pitch: original.pitch },
+  );
+  await waitForIdle(map);
+
+  try {
+    return await fn();
+  } finally {
+    map.jumpTo(original);
+    INTERACTION_HANDLERS.forEach((name, i) => {
+      if (wasEnabled[i]) map[name].enable();
+    });
+    editor?.resume();
+  }
+}
+
+/**
+ * Capture the selected bbox as a PNG, framed so off-screen selections render
+ * fully before the canvas is cropped.
+ */
+function captureSelectedPng(
+  map: MlMap,
+  bbox: BBox,
+  scale: 1 | 2 | 3,
+  editor: SelectionEditor | null,
+): Promise<Blob> {
+  return withFramedBbox(map, bbox, editor, () => {
+    const originalPixelRatio = window.devicePixelRatio;
+    const targetPixelRatio = originalPixelRatio * scale;
+    const hasSelectionLayers =
+      !!(map.getLayer(SELECTION_FILL) && map.getLayer(SELECTION_LINE));
+
+    const restoreRenderState = () => {
+      map.setPixelRatio(originalPixelRatio);
+      if (hasSelectionLayers) {
+        map.setLayoutProperty(SELECTION_FILL, "visibility", "visible");
+        map.setLayoutProperty(SELECTION_LINE, "visibility", "visible");
+      }
+    };
+
+    const crop = (): Promise<Blob> => {
+      const sourceCanvas = map.getCanvas();
+      // At targetPixelRatio the canvas physical size is scaled up; CSS crop
+      // coords stay in logical pixels so we scale them by the same ratio.
+      const cropRect = getCanvasCropForBbox(map, bbox);
+      const ratio = sourceCanvas.width / sourceCanvas.clientWidth;
+      const srcX = Math.round(cropRect.x * ratio);
+      const srcY = Math.round(cropRect.y * ratio);
+      const srcW = Math.max(1, Math.round(cropRect.width * ratio));
+      const srcH = Math.max(1, Math.round(cropRect.height * ratio));
+
+      const out = document.createElement("canvas");
+      out.width = srcW;
+      out.height = srcH;
+      const ctx = out.getContext("2d");
+      if (!ctx) return Promise.reject(new Error("Canvas export is not available"));
+      ctx.drawImage(sourceCanvas, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+
+      restoreRenderState();
+
+      return new Promise<Blob>((resolve, reject) => {
+        out.toBlob((blob) => {
+          if (!blob) { reject(new Error("PNG export failed")); return; }
+          resolve(blob);
+        }, "image/png");
+      });
+    };
+
+    if (hasSelectionLayers) {
+      map.setLayoutProperty(SELECTION_FILL, "visibility", "none");
+      map.setLayoutProperty(SELECTION_LINE, "visibility", "none");
+    }
+
+    // Bump pixel ratio so MapLibre re-renders at the target resolution, then
+    // capture on the next rendered frame.
+    map.setPixelRatio(targetPixelRatio);
+    return new Promise<Blob>((resolve, reject) => {
+      map.once("render", () => crop().then(resolve, reject));
+      map.triggerRepaint();
+    }).catch((err) => {
+      restoreRenderState(); // Never leave the canvas at the bumped pixel ratio.
+      throw err;
+    });
+  });
+}
+
+/**
+ * Build an export model directly from the live map style. Each visible
+ * fill/line layer is walked in render order; its features within the bbox are
+ * projected with the same projection as the screen, and its paint (color,
+ * width, dash, opacity) is resolved per feature at the current zoom. This is
+ * what makes the SVG match the on-screen map instead of a fixed re-styling.
+ */
+function buildStyledFeatureSetForBbox(
+  map: MlMap,
+  bbox: BBox,
+  editor: SelectionEditor | null,
+): Promise<StyledFeatureSet> {
+  return withFramedBbox(map, bbox, editor, () => collectStyledLayers(map, bbox));
+}
+
+function collectStyledLayers(map: MlMap, bbox: BBox): StyledFeatureSet {
   const crop = getCanvasCropForBbox(map, bbox);
   const { x: minX, y: minY, width, height } = crop;
-  const rendered = map.queryRenderedFeatures(
-    [
-      [minX, minY],
-      [minX + width, minY + height],
-    ],
-  );
-  const features: ProjectedFeatureSet["features"] = [];
-  const seen = new Set<string>();
+  const zoom = map.getZoom();
+  const queryBox: [[number, number], [number, number]] = [
+    [minX, minY],
+    [minX + width, minY + height],
+  ];
 
-  for (const renderedFeature of rendered) {
-    if (renderedFeature.source === SELECTION_SOURCE) continue;
+  const styleLayers = map.getStyle().layers as StyleLayerLike[];
+  const layers: StyledLayer[] = [];
+  let background = "#ffffff";
 
-    const layerKind = classifyRenderedFeature(renderedFeature);
-    if (!layerKind) continue;
+  for (const styleLayer of styleLayers) {
+    if (!VECTORIZABLE_LAYER_TYPES.has(styleLayer.type)) continue;
+    if (styleLayer.layout?.visibility === "none") continue;
+    if (typeof styleLayer.minzoom === "number" && zoom < styleLayer.minzoom) continue;
+    if (typeof styleLayer.maxzoom === "number" && zoom >= styleLayer.maxzoom) continue;
 
-    const geometries = normalizeGeometry(renderedFeature.geometry);
-    if (geometries.length === 0) continue;
+    if (styleLayer.type === "background") {
+      const css = resolveLayerColor(map, styleLayer.id, "background-color", "background-opacity", zoom, {});
+      if (css) background = css;
+      continue;
+    }
 
-    const baseId = buildFeatureBaseId(renderedFeature, layerKind);
-    const name = readFeatureName(renderedFeature.properties);
+    const fillType = styleLayer.type === "fill" || styleLayer.type === "fill-extrusion";
+    let rendered: maplibregl.MapGeoJSONFeature[];
+    try {
+      rendered = map.queryRenderedFeatures(queryBox, { layers: [styleLayer.id] });
+    } catch {
+      continue; // Layer not queryable (e.g. not yet loaded).
+    }
+    if (rendered.length === 0) continue;
 
-    geometries.forEach((geometry, index) => {
-      const d = projectedPathFromGeometry(map, geometry, minX, minY);
-      if (!d) return;
-      const signature = `${layerKind}|${d}`;
-      if (seen.has(signature)) return;
-      seen.add(signature);
-      features.push({
-        id: `${baseId}-${index}`,
-        layer: layerKind,
-        name,
-        d,
+    const paths: StyledPath[] = [];
+    const seen = new Set<string>();
+    for (const feature of rendered) {
+      if (feature.source === SELECTION_SOURCE) continue;
+      const geometries = normalizeGeometry(feature.geometry);
+      if (geometries.length === 0) continue;
+      const baseId = buildFeatureBaseId(feature, "roads");
+      const name = readFeatureName(feature.properties);
+      geometries.forEach((geometry, index) => {
+        const d = projectedPathFromGeometry(map, geometry, minX, minY);
+        if (!d) return;
+        if (seen.has(d)) return;
+        seen.add(d);
+        paths.push({ id: `${baseId}-${index}`, name, d });
       });
-    });
+    }
+    if (paths.length === 0) continue;
+
+    // Resolve paint once per layer using the first feature's properties. Most
+    // OpenMapTiles layers are constant or zoom-driven; data-driven variation
+    // within a single style layer is rare and acceptably approximated.
+    const sampleProps = (rendered[0]?.properties ?? {}) as Record<string, unknown>;
+    if (fillType) {
+      const colorProp = styleLayer.type === "fill" ? "fill-color" : "fill-extrusion-color";
+      const opacityProp = styleLayer.type === "fill" ? "fill-opacity" : "fill-extrusion-opacity";
+      const fill = resolveLayerColor(map, styleLayer.id, colorProp, opacityProp, zoom, sampleProps);
+      const stroke =
+        styleLayer.type === "fill"
+          ? resolveLayerColor(map, styleLayer.id, "fill-outline-color", "fill-opacity", zoom, sampleProps)
+          : undefined;
+      layers.push({ id: styleLayer.id, type: "fill", fill, stroke, features: paths });
+    } else {
+      const stroke = resolveLayerColor(map, styleLayer.id, "line-color", "line-opacity", zoom, sampleProps);
+      const widthVal = evaluatePaint(
+        styleLayer.id,
+        "line-width",
+        map.getPaintProperty(styleLayer.id, "line-width"),
+        zoom,
+        sampleProps,
+      );
+      const dashVal = evaluatePaint(
+        styleLayer.id,
+        "line-dasharray",
+        map.getPaintProperty(styleLayer.id, "line-dasharray"),
+        zoom,
+        sampleProps,
+      );
+      layers.push({
+        id: styleLayer.id,
+        type: "line",
+        stroke,
+        strokeWidth: typeof widthVal === "number" ? widthVal : 1,
+        dash: Array.isArray(dashVal) ? (dashVal as number[]) : undefined,
+        cap: asString(map.getLayoutProperty(styleLayer.id, "line-cap")) ?? "butt",
+        join: asString(map.getLayoutProperty(styleLayer.id, "line-join")) ?? "miter",
+        features: paths,
+      });
+    }
   }
 
-  return {
-    width,
-    height,
-    features,
-  };
+  return { width, height, background, layers };
+}
+
+// Resolve a layer color property, folding its opacity property into the alpha.
+function resolveLayerColor(
+  map: MlMap,
+  layerId: string,
+  colorProp: string,
+  opacityProp: string,
+  zoom: number,
+  props: Record<string, unknown>,
+): string | undefined {
+  const colorVal = evaluatePaint(layerId, colorProp, map.getPaintProperty(layerId, colorProp), zoom, props);
+  if (colorVal === undefined) return undefined;
+  const opacityVal = evaluatePaint(layerId, opacityProp, map.getPaintProperty(layerId, opacityProp), zoom, props);
+  const opacity = typeof opacityVal === "number" ? opacityVal : 1;
+  return colorToCss(colorVal, opacity);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function getCanvasCropForBbox(map: MlMap, bbox: BBox) {
@@ -458,102 +1168,6 @@ function getCanvasCropForBbox(map: MlMap, bbox: BBox) {
     width: Math.max(1, Math.round(maxX - minX)),
     height: Math.max(1, Math.round(maxY - minY)),
   };
-}
-
-function classifyRenderedFeature(feature: {
-  geometry: { type: string };
-  layer?: { id?: string; type?: string };
-  properties?: Record<string, unknown>;
-  source?: string;
-  sourceLayer?: string;
-}): LayerKind | null {
-  const layerId = String(feature.layer?.id ?? "").toLowerCase();
-  const layerType = String(feature.layer?.type ?? "").toLowerCase();
-  const sourceLayer = String(feature.sourceLayer ?? "").toLowerCase();
-  const geomType = feature.geometry.type;
-  const props = feature.properties ?? {};
-  const className = String(props.class ?? props.type ?? "").toLowerCase();
-  const subclass = String(props.subclass ?? "").toLowerCase();
-  const leisure = String(props.leisure ?? "").toLowerCase();
-  const landuse = String(props.landuse ?? "").toLowerCase();
-  const natural = String(props.natural ?? "").toLowerCase();
-
-  if (layerType === "symbol" || geomType === "Point" || geomType === "MultiPoint") return null;
-
-  if (sourceLayer === "building" || layerId.includes("building")) {
-    return isPolygonGeometry(geomType) ? "buildings" : null;
-  }
-
-  if (
-    sourceLayer === "water" ||
-    sourceLayer === "waterway" ||
-    layerId.includes("water") ||
-    layerId.includes("ocean") ||
-    layerId.includes("river") ||
-    layerId.includes("lake")
-  ) {
-    return geomType === "LineString" || geomType === "MultiLineString" ? "roads" : "water";
-  }
-
-  if (sourceLayer === "park") {
-    return isPolygonGeometry(geomType) ? "parks" : null;
-  }
-
-  if (sourceLayer === "landuse" || sourceLayer === "landcover" || layerId.includes("park")) {
-    const parkLike =
-      PARK_CLASSES.has(className) ||
-      PARK_CLASSES.has(subclass) ||
-      PARK_CLASSES.has(leisure) ||
-      PARK_CLASSES.has(landuse) ||
-      PARK_CLASSES.has(natural);
-    if (parkLike && isPolygonGeometry(geomType)) return "parks";
-  }
-
-  if (
-    sourceLayer === "transportation" ||
-    sourceLayer === "road" ||
-    layerId.includes("road") ||
-    layerId.includes("street") ||
-    layerId.includes("bridge") ||
-    layerId.includes("tunnel") ||
-    layerId.includes("path")
-  ) {
-    const blocked =
-      ROAD_EXCLUSIONS.has(className) ||
-      ROAD_EXCLUSIONS.has(subclass) ||
-      layerId.includes("rail");
-    return blocked ? null : "roads";
-  }
-
-  return null;
-}
-
-const PARK_CLASSES = new Set([
-  "allotments",
-  "garden",
-  "grass",
-  "greenfield",
-  "meadow",
-  "park",
-  "pitch",
-  "playground",
-  "recreation_ground",
-  "recreational",
-  "village_green",
-  "wood",
-]);
-
-const ROAD_EXCLUSIONS = new Set([
-  "ferry",
-  "rail",
-  "railway",
-  "runway",
-  "subway",
-  "tram",
-]);
-
-function isPolygonGeometry(type: string): boolean {
-  return type === "Polygon" || type === "MultiPolygon";
 }
 
 function normalizeGeometry(geometry: {
@@ -629,12 +1243,17 @@ function projectedPathFromCoords(
 ): string {
   if (coords.length === 0) return "";
   let d = "";
+  let started = false;
   for (let i = 0; i < coords.length; i++) {
     const point = map.project([coords[i].lng, coords[i].lat]);
     const x = Math.round((point.x - offsetX) * 100) / 100;
     const y = Math.round((point.y - offsetY) * 100) / 100;
-    d += `${i === 0 ? "M" : "L"}${x} ${y} `;
+    // Skip non-finite projections so we never emit `M NaN NaN` into the SVG.
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    d += `${started ? "L" : "M"}${x} ${y} `;
+    started = true;
   }
+  if (!started) return "";
   if (close) d += "Z";
   return d.trim();
 }

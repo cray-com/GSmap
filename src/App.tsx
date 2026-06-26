@@ -32,10 +32,9 @@ import {
 } from "./recents";
 import { SettingsModal } from "./SettingsModal";
 import { StyleSelect } from "./StyleSelect";
-import { downloadBlob, downloadSvg, generateProjectedSvg } from "./svg";
-import { buildTokens, DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
-import type { BBox, LayerKind } from "./types";
-import type { ProjectedFeatureSet } from "./svg";
+import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
+import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
+import type { BBox } from "./types";
 
 type UiTheme = "light" | "dark";
 
@@ -62,6 +61,8 @@ export function App() {
   const [hideLabels, setHideLabels] = useState(false);
   const [hideBuildings, setHideBuildings] = useState(false);
   const [roadsColor, setRoadsColor] = useState<string | null>(null);
+  const [buildingsColor, setBuildingsColor] = useState<string | null>(null);
+  const [backgroundColor, setBackgroundColor] = useState<string | null>(null);
   const styleDef = useMemo(() => getStyleDef(styleId), [styleId]);
   const [nameQuery, setNameQuery] = useState("");
   const [coordQuery, setCoordQuery] = useState("");
@@ -97,8 +98,11 @@ export function App() {
     }
   }, [uiTheme]);
 
+  // Record search/coordinate origins as they arrive. Plain map selections are
+  // recorded only once the user accepts the edit (see handleAcceptSelection),
+  // so intermediate drag states never pollute the history.
   useEffect(() => {
-    if (!bbox) return;
+    if (!bbox || (!pendingLabel && !pendingSearchCoords)) return;
     const center = pendingSearchCoords ?? centerOfBbox(bbox);
     setRecents((curr) =>
       pushRecent(curr, {
@@ -106,7 +110,7 @@ export function App() {
         label: pendingLabel ?? formatCoords(center.lat, center.lon),
         lat: center.lat,
         lon: center.lon,
-        kind: pendingLabel ? "search" : "selection",
+        kind: "search",
       }),
     );
     setPendingLabel(null);
@@ -114,12 +118,22 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bbox]);
 
-  const tokens = useMemo(
-    () => buildTokens(styleId, undefined, roadsColor),
-    [styleId, roadsColor],
-  );
+  function handleAcceptSelection(accepted: BBox) {
+    const center = centerOfBbox(accepted);
+    setRecents((curr) =>
+      pushRecent(curr, {
+        bbox: accepted,
+        label: formatCoords(center.lat, center.lon),
+        lat: center.lat,
+        lon: center.lon,
+        kind: "selection",
+      }),
+    );
+  }
 
   const effectiveRoadsColor = roadsColor ?? getStyleDef(styleId).tokens.roads;
+  const effectiveBuildingsColor = buildingsColor ?? getStyleDef(styleId).tokens.buildings;
+  const effectiveBackgroundColor = backgroundColor ?? getStyleDef(styleId).tokens.background;
 
   const dimsKm = useMemo(() => {
     if (!bbox) return null;
@@ -160,22 +174,16 @@ export function App() {
     setSearchResults([]);
   }
 
+  // Re-applying a history entry only navigates the map; it must not record a
+  // new entry (that would duplicate or reorder the very item being clicked).
   function applyRecent(r: RecentLocation) {
     if (r.bbox) {
       mapRef.current?.fitBbox(r.bbox);
     } else {
-      setRecents((curr) =>
-        pushRecent(curr, {
-          label: r.label,
-          lat: r.lat,
-          lon: r.lon,
-          kind: r.kind,
-        }),
-      );
       mapRef.current?.flyTo(r.lon, r.lat, 15);
     }
-    setPendingLabel(r.label);
-    setPendingSearchCoords({ lat: r.lat, lon: r.lon });
+    setPendingLabel(null);
+    setPendingSearchCoords(null);
     setBbox(r.bbox ?? null);
   }
 
@@ -225,21 +233,24 @@ export function App() {
     }
   }
 
-  function handleExportSvgLocal() {
+  async function handleExportSvgLocal() {
     const map = mapRef.current;
-    if (!bbox) {
+    if (!bbox || !map) {
       setStatusMsg(t.export.selectAreaFirst);
       setStatusError(true);
       return;
     }
-    const visible = map?.getProjectedFeatureSetForBbox(bbox);
-    if (!visible) return;
     setExporting(true);
     setStatusMsg(null);
     setStatusError(false);
     try {
-      const filteredVisible = filterProjectedFeatureSetLayers(visible, hideBuildings ? ["buildings"] : []);
-      const svg = generateProjectedSvg(filteredVisible, tokens, !hideLabels);
+      // hideLabels/hideBuildings already toggle layer visibility on the map, and
+      // the styled collector skips layers with visibility:none, so the SVG
+      // mirrors the current map without extra filtering. The collector also
+      // frames the bbox first, so off-screen selections export fully.
+      const styled = await map.getStyledFeatureSetForBbox(bbox);
+      if (!styled) return;
+      const svg = generateStyledSvg(styled);
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       downloadSvg(svg, `gsmap-local-${stamp}.svg`);
       setStatusMsg(null);
@@ -498,6 +509,50 @@ export function App() {
                       </button>
                     )}
                   </div>
+                  <div className="roads-color-row">
+                    <label htmlFor="buildings-color-input" className="roads-color-label">
+                      {t.style.buildingsColor}
+                    </label>
+                    <input
+                      id="buildings-color-input"
+                      type="color"
+                      className="roads-color-input"
+                      value={effectiveBuildingsColor}
+                      onChange={(e) => setBuildingsColor(e.target.value)}
+                      aria-label={t.style.buildingsColor}
+                    />
+                    {buildingsColor && (
+                      <button
+                        type="button"
+                        className="roads-color-reset"
+                        onClick={() => setBuildingsColor(null)}
+                      >
+                        {t.style.reset}
+                      </button>
+                    )}
+                  </div>
+                  <div className="roads-color-row">
+                    <label htmlFor="background-color-input" className="roads-color-label">
+                      {t.style.backgroundColor}
+                    </label>
+                    <input
+                      id="background-color-input"
+                      type="color"
+                      className="roads-color-input"
+                      value={effectiveBackgroundColor}
+                      onChange={(e) => setBackgroundColor(e.target.value)}
+                      aria-label={t.style.backgroundColor}
+                    />
+                    {backgroundColor && (
+                      <button
+                        type="button"
+                        className="roads-color-reset"
+                        onClick={() => setBackgroundColor(null)}
+                      >
+                        {t.style.reset}
+                      </button>
+                    )}
+                  </div>
                 </PanelSection>
             </>}
 
@@ -645,7 +700,15 @@ export function App() {
           hideLabels={hideLabels}
           hideBuildings={hideBuildings}
           roadsColor={roadsColor}
+          buildingsColor={buildingsColor}
+          backgroundColor={backgroundColor}
+          editLabels={{
+            accept: t.selection.accept,
+            revert: t.selection.revert,
+            hint: t.selection.editHint,
+          }}
           onSelect={setBbox}
+          onAcceptSelection={handleAcceptSelection}
         />
       )}
       <AnimatePresence mode="wait">
@@ -795,14 +858,3 @@ function SwitchRow({ label, checked, onChange }: SwitchRowProps) {
   );
 }
 
-function filterProjectedFeatureSetLayers(
-  set: ProjectedFeatureSet,
-  hiddenLayers: LayerKind[],
-): ProjectedFeatureSet {
-  if (hiddenLayers.length === 0) return set;
-  const hidden = new Set(hiddenLayers);
-  return {
-    ...set,
-    features: set.features.filter((feature) => !hidden.has(feature.layer)),
-  };
-}

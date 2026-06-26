@@ -852,6 +852,54 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .map-wrap { position: relative; min-width: 0; height: 100vh; }
 .map { position: absolute; inset: 0; }
 
+/* Selection edit — resize handles and floating accept/revert bar */
+.selection-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-elev);
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  box-shadow: var(--shadow-sm);
+  z-index: 11;
+}
+
+.selection-edit-bar {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel-translucent);
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  z-index: 12;
+}
+.selection-edit-hint {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.selection-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+.mini-action--accent {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.mini-action--accent:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  filter: brightness(1.06);
+}
+
 /* Map help — floating command-bar hint */
 .help {
   position: absolute;
