@@ -2,7 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "re
 import maplibregl, { Map as MlMap, LngLatBoundsLike } from "maplibre-gl";
 import type { BBox, Geometry, LayerKind, LngLat } from "./types";
 import { aggregatePins, type Pin } from "./pins";
-import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, templateStyle, templateText, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
+import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, rasterizePin, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
 import { getStyleDef, type MapStyleId } from "./theme";
 import type { StyledFeatureSet, StyledLayer, StyledPath } from "./svg";
 import { evaluatePaint, colorToCss, clearStyleResolveCache } from "./styleResolve";
@@ -234,7 +234,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       applyRoadsColor(mapRef.current, roadsColorRef.current);
       applyBuildingsColor(mapRef.current, buildingsColorRef.current);
       applyBackgroundColor(mapRef.current, backgroundColorRef.current);
-      syncPins(mapRef.current, pinsRef.current, pinTemplateRef.current, pinCssRef.current);
+      void syncPins(mapRef.current, pinsRef.current, pinTemplateRef.current, pinCssRef.current);
     };
     map.on("idle", restoreOverlays);
     map.setStyle(def.styleUrl);
@@ -246,7 +246,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    return whenStyleLoaded(map, () => syncPins(map, pins, pinTemplateRef.current, pinCssRef.current));
+    return whenStyleLoaded(map, () => { void syncPins(map, pins, pinTemplateRef.current, pinCssRef.current); });
   }, [pins, pinTemplate, pinCss]);
 
   // Toggle label visibility without reloading the style.
@@ -382,12 +382,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
 const PINS_SOURCE = "user-pins";
 const PINS_CIRCLE = "user-pins-circle";
 const PINS_LABELS = "user-pins-labels";
-
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.moveTo(x + r, y); ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r); ctx.arcTo(x, y + height, x, y, r); ctx.arcTo(x, y, x + width, y, r); ctx.closePath();
-}
+const pinSyncVersions = new WeakMap<MlMap, number>();
 
 function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
   if ((map.getStyle()?.layers?.length ?? 0) > 0) {
@@ -405,44 +400,63 @@ function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
   };
 }
 
-function syncPins(map: MlMap, pins: Pin[], template = DEFAULT_PIN_TEMPLATE, css = DEFAULT_PIN_CSS) {
+async function syncPins(map: MlMap, pins: Pin[], template = DEFAULT_PIN_TEMPLATE, css = DEFAULT_PIN_CSS): Promise<void> {
   if ((map.getStyle()?.layers?.length ?? 0) === 0) return;
+  const version = (pinSyncVersions.get(map) ?? 0) + 1;
+  pinSyncVersions.set(map, version);
   const grouped = aggregatePins(pins);
   const data: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
     features: grouped.map((pin, index) => ({
-      type: "Feature", id: pin.id ?? `pin-${index}`,
-      properties: { ...pin.properties, label: pin.label ?? "", duplicateCount: pin.duplicateCount, duplicateScale: pin.duplicateScale, icon: `user-pin-${index}` },
+      type: "Feature",
+      id: pin.id ?? `pin-${index}`,
+      properties: {
+        ...pin.properties,
+        label: pin.label ?? "",
+        duplicateCount: pin.duplicateCount,
+        duplicateScale: pin.duplicateScale,
+        icon: `user-pin-${index}`,
+      },
       geometry: { type: "Point", coordinates: [pin.lon, pin.lat] },
     })),
   };
+  sanitizePinCss(css);
+  sanitizePinTemplate(template);
+  let images: { id: string; image: ImageData }[];
   try {
-    const style = templateStyle(sanitizePinCss(css));
-    const safeTemplate = sanitizePinTemplate(template);
-    grouped.forEach((pin, index) => {
-      const canvas = document.createElement("canvas");
-      const scale = pin.duplicateScale;
-      const text = templateText(safeTemplate, { ...pin.properties, ...pin, label: pin.label ?? "" });
-      const lines = text.split("\\n");
-      const ctx = canvas.getContext("2d"); if (!ctx) return;
-      ctx.font = `${style.fontSize * scale}px sans-serif`;
-      const width = Math.max(18, ...lines.map((line) => ctx.measureText(line).width)) + style.padding * 2 * scale + 4 * scale;
-      const height = Math.max(18, lines.length * style.fontSize * 1.2 + style.padding * 2) * scale;
-      canvas.width = Math.ceil(width); canvas.height = Math.ceil(height);
-      ctx.font = `${style.fontSize * scale}px sans-serif`; ctx.fillStyle = style.background; ctx.strokeStyle = style.border.match(/#[0-9a-f]{3,8}|rgba?\\([^)]*\\)/i)?.[0] ?? "#fff"; ctx.lineWidth = 2 * scale;
-      const radius = Math.min(style.radius * scale, canvas.height / 2); ctx.beginPath(); roundedRect(ctx, 1 * scale, 1 * scale, canvas.width - 2 * scale, canvas.height - 2 * scale, radius); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = style.color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      lines.forEach((line, lineIndex) => ctx.fillText(line, canvas.width / 2, canvas.height / 2 + (lineIndex - (lines.length - 1) / 2) * style.fontSize * 1.2 * scale));
-      const image = { width: canvas.width, height: canvas.height, data: ctx.getImageData(0, 0, canvas.width, canvas.height).data };
-      const imageId = `user-pin-${index}`; if (map.hasImage(imageId)) map.updateImage(imageId, image); else map.addImage(imageId, image, { pixelRatio: scale });
-    });
-  } catch { return; }
+    images = await Promise.all(grouped.map((pin, index) => rasterizePin(
+      template,
+      css,
+      { ...pin.properties, ...pin, label: pin.label ?? "" },
+    ).then((image) => ({ id: `user-pin-${index}`, image }))));
+  } catch {
+    return;
+  }
+  if (pinSyncVersions.get(map) !== version || !map.isStyleLoaded()) return;
   try {
+    const wanted = new Set(images.map(({ id }) => id));
+    for (const image of map.listImages()) {
+      if (image.startsWith("user-pin-") && !wanted.has(image)) map.removeImage(image);
+    }
+    for (const { id, image } of images) {
+      if (map.hasImage(id)) map.updateImage(id, image);
+      else map.addImage(id, image, { pixelRatio: 2 });
+    }
     const source = map.getSource(PINS_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (source) source.setData(data);
     else map.addSource(PINS_SOURCE, { type: "geojson", data });
     if (!map.getLayer(PINS_CIRCLE)) {
-      map.addLayer({ id: PINS_CIRCLE, type: "symbol", source: PINS_SOURCE, layout: { "icon-image": ["get", "icon"], "icon-anchor": "bottom", "icon-allow-overlap": true } });
+      map.addLayer({
+        id: PINS_CIRCLE,
+        type: "symbol",
+        source: PINS_SOURCE,
+        layout: {
+          "icon-image": ["get", "icon"],
+          "icon-size": ["get", "duplicateScale"],
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+        },
+      });
     }
     if (!map.getLayer(PINS_LABELS)) {
       map.addLayer({
@@ -458,11 +472,7 @@ function syncPins(map: MlMap, pins: Pin[], template = DEFAULT_PIN_TEMPLATE, css 
           "text-allow-overlap": true,
           "text-font": ["Noto Sans Regular"],
         },
-        paint: {
-          "text-color": "#20202a",
-          "text-halo-color": "#ffffff",
-          "text-halo-width": 1.5,
-        },
+        paint: { "text-color": "#20202a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
     }
   } catch {

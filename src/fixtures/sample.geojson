@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Vienna"},"geometry":{"type":"Point","coordinates":[16.3738,48.2082]}},{"type":"Feature","properties":{"name":"Two"},"geometry":{"type":"Point","coordinates":[16.38,48.21]}}]}

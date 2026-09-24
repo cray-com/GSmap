@@ -398,6 +398,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .pin-file-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .pin-meta { color: var(--text-soft); font-size: 10px; }
 .pin-code-input { min-height: 70px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; margin-bottom: 7px; }
+.pin-code-file { display: none; }
 .pin-actions {
   display: flex;
   align-items: center;

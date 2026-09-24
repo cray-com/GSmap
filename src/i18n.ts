@@ -46,6 +46,10 @@ const ptBR = {
     resetTemplate: "Redefinir",
     chooseHtml: "Escolher .html",
     chooseCss: "Escolher .css",
+    chooseJson: "Escolher .json/.geojson",
+    applyTemplate: "Aplicar modelo",
+    detectedLabel: "Campo de rótulo",
+    templateError: "Modelo não aplicado",
   },
   selection: {
     sectionTitle: "Seleção",
@@ -155,6 +159,10 @@ const enUS = {
     resetTemplate: "Reset",
     chooseHtml: "Choose .html",
     chooseCss: "Choose .css",
+    chooseJson: "Choose .json/.geojson",
+    applyTemplate: "Apply template",
+    detectedLabel: "Detected label field",
+    templateError: "Template not applied",
   },
   selection: {
     sectionTitle: "Selection",

@@ -52,7 +52,7 @@ Der Import läuft vollständig im Browser. Unterstützt werden der dokumentierte
 
 Identische Koordinaten werden zu einem Pin aggregiert. Die Größe skaliert mit `sqrt(duplicateCount)` und ist begrenzt; `duplicateCount` und `duplicateScale` stehen im Template zur Verfügung. Es gibt keine räumliche Verschiebung und kein erforderliches Badge.
 
-HTML- und CSS-Pinvorlagen werden als sicherer, absichtlich kleiner Subset behandelt: `div`, `span`, Text und wenige typografische/Box-Eigenschaften. Platzhalter sind `{{field}}` und werden HTML-escaped. JavaScript, Event-Handler, iframe/object/embed, externe URLs, `url()` und `@import` werden abgelehnt. Die Vorlage wird zu einem hochauflösenden MapLibre-Rasterbild gerendert, dadurch sind Vorschau, Map-Style-Wechsel und PNG identisch; SVG bleibt pinfrei. Uploads akzeptieren `.json`, `.geojson`, `.html` und `.css`.
+HTML- und CSS-Pinvorlagen werden als sicherer, absichtlich kleiner Subset behandelt: `div`, `span`, Text und Klassen sowie normale CSS-Selektoren und Layout-/Box-Eigenschaften (unter anderem Flexbox, Abstände, Rahmen und Transformations). Platzhalter sind `{{field}}` und werden HTML-escaped. JavaScript, Event-Handler, iframe/object/embed, externe URLs, `url()` und `@import` werden abgelehnt. Die Vorlage wird zu einem hochauflösenden MapLibre-Rasterbild gerendert, dadurch sind Vorschau, Map-Style-Wechsel und PNG identisch; SVG bleibt pinfrei. Uploads akzeptieren `.json`, `.geojson`, `.html` und `.css`.
 
 ## Später
 

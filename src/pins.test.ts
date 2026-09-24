@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { aggregatePins, parsePinDocument, parsePinInput } from "./pins";
-import { escapeHtml, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
+import { aggregatePins, boundsFromPins, isPinFileName, parsePinDocument, parsePinInput } from "./pins";
+import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, escapeHtml, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
 
 describe("parsePinDocument", () => {
+  it("recognizes ordinary JSON upload filenames", () => {
+    expect(isPinFileName("locations.json")).toBe(true);
+    expect(isPinFileName("locations.geojson")).toBe(true);
+    expect(isPinFileName("locations.txt")).toBe(false);
+  });
+
   it("parses pins and optional bounds", () => {
     expect(parsePinDocument(JSON.stringify({
       bounds: { south: 1, west: 2, north: 3, east: 4 },
@@ -39,11 +45,11 @@ describe("parsePinDocument", () => {
     expect(parsed.pins[0].properties?.project).toBe("P");
   });
 
-  it("imports both supplied GSmap2 fixtures", () => {
-    const json = readFileSync("/home/rasputin/Shared/GSmap2/create-graffiti-dataset.json", "utf8");
-    const geojson = readFileSync("/home/rasputin/Shared/GSmap2/create-graffiti-dataset.geojson", "utf8");
-    expect(parsePinInput(json).pins.length).toBeGreaterThan(0);
-    expect(parsePinInput(geojson).pins.length).toBeGreaterThan(0);
+  it("imports representative JSON and GeoJSON fixtures", () => {
+    const json = readFileSync(new URL("./fixtures/sample.json", import.meta.url), "utf8");
+    const geojson = readFileSync(new URL("./fixtures/sample.geojson", import.meta.url), "utf8");
+    expect(parsePinInput(json).pins.length).toBe(2);
+    expect(parsePinInput(geojson).pins.length).toBe(2);
   });
 
   it("detects GeoJSON points with lon/lat order", () => {
@@ -52,9 +58,20 @@ describe("parsePinDocument", () => {
     expect(parsed.pins[0]).toMatchObject({ lat: 1, lon: 2, label: "X" });
   });
 
+  it("computes padded bounds for imported pins", () => {
+    expect(boundsFromPins([{ lat: 10, lon: 20 }, { lat: 12, lon: 24 }])).toEqual({ south: 9.8, west: 19.6, north: 12.2, east: 24.4 });
+    expect(boundsFromPins([{ lat: 10, lon: 20 }])).toEqual({ south: 9.99, west: 19.99, north: 10.01, east: 20.01 });
+  });
+
   it("aggregates exact duplicates with square-root scaling", () => {
     const pins = parsePinInput('[{"lat":1,"lon":2},{"lat":1,"lon":2},{"lat":1,"lon":2},{"lat":3,"lon":4}]').pins;
     expect(aggregatePins(pins)).toMatchObject([{ lat: 1, lon: 2, duplicateCount: 3, duplicateScale: Math.sqrt(3) }, { lat: 3, lon: 4, duplicateCount: 1, duplicateScale: 1 }]);
+  });
+
+  it("accepts the default template and CSS", () => {
+    expect(() => sanitizePinTemplate(DEFAULT_PIN_TEMPLATE)).not.toThrow();
+    expect(() => sanitizePinCss(DEFAULT_PIN_CSS)).not.toThrow();
+    expect(() => sanitizePinCss('.pin { display: flex; gap: 4px; padding: 6px 9px; transform: translateY(1px); }')).not.toThrow();
   });
 
   it("escapes template values and rejects active or remote content", () => {

@@ -13,6 +13,10 @@ export type PinMetadata = { format: PinFormat; coordinateFields: string; labelFi
 export type PinDocument = { pins: Pin[]; bounds?: BBox };
 export type ParsedPinDocument = PinDocument & { metadata: PinMetadata };
 
+export function isPinFileName(name: string): boolean {
+  return /\.(json|geojson)$/i.test(name);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -111,6 +115,32 @@ export function parsePinDocument(input: string): PinDocument {
 export type AggregatedPin = Pin & { duplicateCount: number; duplicateScale: number };
 export function aggregatePins(pins: Pin[], maxScale = 3): AggregatedPin[] {
   const groups = new Map<string, Pin[]>();
-  for (const pin of pins) { const key = `${pin.lat}\u0000${pin.lon}`; groups.set(key, [...(groups.get(key) ?? []), pin]); }
-  return [...groups.values()].map((group) => ({ ...group[0], duplicateCount: group.length, duplicateScale: Math.min(maxScale, Math.sqrt(group.length)) }));
+  for (const pin of pins) {
+    const key = `${pin.lat}\u0000${pin.lon}`;
+    const group = groups.get(key) ?? [];
+    group.push(pin);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group[0],
+    duplicateCount: group.length,
+    duplicateScale: Math.min(maxScale, Math.sqrt(group.length)),
+  }));
+}
+
+/** Compute a useful viewport around imported pins when the document has no bounds. */
+export function boundsFromPins(pins: Pin[], paddingRatio = 0.1): BBox | null {
+  if (pins.length === 0) return null;
+  const lats = pins.map((pin) => pin.lat);
+  const lons = pins.map((pin) => pin.lon);
+  const latRange = Math.max(...lats) - Math.min(...lats);
+  const lonRange = Math.max(...lons) - Math.min(...lons);
+  const latPadding = Math.max(latRange * paddingRatio, 0.01);
+  const lonPadding = Math.max(lonRange * paddingRatio, 0.01);
+  return {
+    south: Math.max(-90, Math.min(...lats) - latPadding),
+    west: Math.max(-180, Math.min(...lons) - lonPadding),
+    north: Math.min(90, Math.max(...lats) + latPadding),
+    east: Math.min(180, Math.max(...lons) + lonPadding),
+  };
 }
