@@ -388,6 +388,22 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   flex-direction: column;
   gap: 10px;
 }
+.pin-json-input {
+  min-height: 92px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+.pin-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pin-count {
+  margin-left: auto;
+  color: var(--text-soft);
+  font-size: 11px;
+}
 
 /* ===== Form controls ===================================================== */
 

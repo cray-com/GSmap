@@ -33,6 +33,14 @@ const ptBR = {
     noResults: "Sem resultados",
     invalidCoords: "Coordenadas inválidas. Use: lat, lon",
   },
+  pins: {
+    sectionTitle: "Pontos",
+    jsonLabel: "Dados JSON",
+    placeholder: '{"pins":[{"lat":48.2,"lon":16.3}]}',
+    load: "Carregar",
+    clear: "Limpar",
+    count: (count: number) => `${count} ${count === 1 ? "ponto" : "pontos"}`,
+  },
   selection: {
     sectionTitle: "Seleção",
     active: "Ativa",
@@ -127,6 +135,14 @@ const enUS = {
     goAction: "Go",
     noResults: "No results",
     invalidCoords: "Invalid coordinates. Use: lat, lon",
+  },
+  pins: {
+    sectionTitle: "Pins",
+    jsonLabel: "JSON data",
+    placeholder: '{"pins":[{"lat":48.2,"lon":16.3}]}',
+    load: "Load",
+    clear: "Clear",
+    count: (count: number) => `${count} ${count === 1 ? "pin" : "pins"}`,
   },
   selection: {
     sectionTitle: "Selection",

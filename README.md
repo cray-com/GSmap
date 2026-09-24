@@ -56,9 +56,23 @@ yarn preview
    undo your adjustments). Clicking an accepted selection re-opens editing.
 4. Pick a map style; optionally override the roads, buildings, and background
    colors. Toggle labels or buildings off if you want a cleaner export.
-5. Click **Local SVG** to download the vector export, or **Export PNG** for a
-   raster image.
-6. Open the SVG in your vector editor of choice. Each map-style layer is a
+5. To add points, paste a JSON object into **JSON data** and click **Load**.
+   The required `pins` array contains `lat` and `lon`; each pin may also have an
+   `id` and `label`. An optional `bounds` object (`south`, `west`, `north`,
+   `east`) sets the selection and map view when loaded:
+
+   ```json
+   {
+     "bounds": { "south": 48.18, "west": 16.31, "north": 48.24, "east": 16.43 },
+     "pins": [{ "id": "kunde-1", "lat": 48.2082, "lon": 16.3738, "label": "Standort Wien" }]
+   }
+   ```
+
+   Pins and optional labels appear in the preview and PNG export. Loading JSON
+   without `bounds` keeps the current camera and selection.
+6. Click **Local SVG** to download the vector export, or **Export PNG** for a
+   raster image. Pins are intentionally not included in the SVG export yet.
+7. Open the SVG in your vector editor of choice. Each map-style layer is a
    separate `<g>` so you can edit them independently.
 
 ## SVG structure

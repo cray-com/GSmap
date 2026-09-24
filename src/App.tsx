@@ -35,6 +35,7 @@ import { StyleSelect } from "./StyleSelect";
 import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
 import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
 import type { BBox } from "./types";
+import { parsePinDocument, type Pin } from "./pins";
 
 type UiTheme = "light" | "dark";
 
@@ -77,6 +78,8 @@ export function App() {
   const [pngScale, setPngScale] = useState<1 | 2 | 3>(1);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
+  const [pinJson, setPinJson] = useState("");
+  const [pins, setPins] = useState<Pin[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -189,6 +192,30 @@ export function App() {
 
   function handleClearRecents() {
     setRecents(clearRecents());
+  }
+
+  function handleLoadPins(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const document = parsePinDocument(pinJson);
+      setPins(document.pins);
+      setStatusMsg(null);
+      setStatusError(false);
+      if (document.bounds) {
+        mapRef.current?.fitBbox(document.bounds);
+        setBbox(document.bounds);
+      }
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+      setStatusError(true);
+    }
+  }
+
+  function handleClearPins() {
+    setPins([]);
+    setPinJson("");
+    setStatusMsg(null);
+    setStatusError(false);
   }
 
   function handleClearSelection() {
@@ -402,6 +429,25 @@ export function App() {
                       onChange={setCoordQuery}
                       actionLabel={t.location.goAction}
                     />
+                  </form>
+                </PanelSection>
+
+                <PanelSection title={t.pins.sectionTitle} icon={MapPinned}>
+                  <form className="stack-sm" onSubmit={handleLoadPins}>
+                    <label className="field-label" htmlFor="pin-json">{t.pins.jsonLabel}</label>
+                    <textarea
+                      id="pin-json"
+                      className="input pin-json-input"
+                      value={pinJson}
+                      onChange={(e) => setPinJson(e.target.value)}
+                      placeholder={t.pins.placeholder}
+                      spellCheck={false}
+                    />
+                    <div className="pin-actions">
+                      <button className="btn field-action-button" type="submit">{t.pins.load}</button>
+                      <button className="mini-action" type="button" onClick={handleClearPins}>{t.pins.clear}</button>
+                      <span className="pin-count">{t.pins.count(pins.length)}</span>
+                    </div>
                   </form>
                 </PanelSection>
 
@@ -709,6 +755,7 @@ export function App() {
           }}
           onSelect={setBbox}
           onAcceptSelection={handleAcceptSelection}
+          pins={pins}
         />
       )}
       <AnimatePresence mode="wait">

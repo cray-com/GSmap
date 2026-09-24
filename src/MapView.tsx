@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import maplibregl, { Map as MlMap, LngLatBoundsLike } from "maplibre-gl";
 import type { BBox, Geometry, LayerKind, LngLat } from "./types";
+import type { Pin } from "./pins";
 import { getStyleDef, type MapStyleId } from "./theme";
 import type { StyledFeatureSet, StyledLayer, StyledPath } from "./svg";
 import { evaluatePaint, colorToCss, clearStyleResolveCache } from "./styleResolve";
@@ -31,6 +32,7 @@ type Props = {
   editLabels: EditLabels;
   onSelect: (bbox: BBox | null) => void;
   onAcceptSelection: (bbox: BBox) => void;
+  pins: Pin[];
 };
 
 // Pixel anchor (relative to the map container) used to position the
@@ -42,7 +44,7 @@ type HandleRole = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLE_ROLES: HandleRole[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 export const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { styleId, hideLabels, hideBuildings, roadsColor, buildingsColor, backgroundColor, editLabels, onSelect, onAcceptSelection },
+  { styleId, hideLabels, hideBuildings, roadsColor, buildingsColor, backgroundColor, editLabels, onSelect, onAcceptSelection, pins },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -222,10 +224,22 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
         applyRoadsColor(mapRef.current, roadsColorRef.current);
         applyBuildingsColor(mapRef.current, buildingsColorRef.current);
         applyBackgroundColor(mapRef.current, backgroundColorRef.current);
+        syncPins(mapRef.current, pins);
       }
     });
     map.setStyle(def.styleUrl);
   }, [styleId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => syncPins(map, pins);
+    if (map.isStyleLoaded()) apply();
+    else map.once("styledata", apply);
+    return () => {
+      map.off("styledata", apply);
+    };
+  }, [pins]);
 
   // Toggle label visibility without reloading the style.
   useEffect(() => {
@@ -356,6 +370,63 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     </div>
   );
 });
+
+const PINS_SOURCE = "user-pins";
+const PINS_CIRCLE = "user-pins-circle";
+const PINS_LABELS = "user-pins-labels";
+
+function syncPins(map: MlMap, pins: Pin[]) {
+  const data: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: pins.map((pin, index) => ({
+      type: "Feature",
+      id: pin.id ?? `pin-${index}`,
+      properties: pin.label !== undefined ? { label: pin.label } : {},
+      geometry: { type: "Point", coordinates: [pin.lon, pin.lat] },
+    })),
+  };
+  try {
+    const source = map.getSource(PINS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (source) source.setData(data);
+    else map.addSource(PINS_SOURCE, { type: "geojson", data });
+    if (!map.getLayer(PINS_CIRCLE)) {
+      map.addLayer({
+        id: PINS_CIRCLE,
+        type: "circle",
+        source: PINS_SOURCE,
+        paint: {
+          "circle-radius": 5,
+          "circle-color": "#5b5bf2",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+        },
+      });
+    }
+    if (!map.getLayer(PINS_LABELS)) {
+      map.addLayer({
+        id: PINS_LABELS,
+        type: "symbol",
+        source: PINS_SOURCE,
+        filter: ["has", "label"],
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 12,
+          "text-offset": [0, 1.15],
+          "text-anchor": "top",
+          "text-allow-overlap": true,
+        },
+        paint: {
+          "text-color": "#20202a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
+      });
+    }
+  } catch {
+    // The style may still be swapping; retry once it is idle.
+    map.once("idle", () => syncPins(map, pins));
+  }
+}
 
 const SELECTION_SOURCE = "selection-bbox";
 const SELECTION_FILL = "selection-bbox-fill";
