@@ -35,9 +35,35 @@ import { StyleSelect } from "./StyleSelect";
 import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
 import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
 import type { BBox } from "./types";
-import { boundsFromPins, isPinFileName, parsePinInput, type Pin, type PinMetadata } from "./pins";
+import {
+  boundsFromPins,
+  getLabelFieldCoverage,
+  isPinFileName,
+  parsePinInput,
+  type Pin,
+  type PinMetadata,
+} from "./pins";
 
 type UiTheme = "light" | "dark";
+
+const DEFAULT_PIN_STYLE: PinStyleOptions = {
+  radius: 7,
+  fillColor: "#5b5bf2",
+  strokeColor: "#ffffff",
+  strokeWidth: 2,
+  opacity: 0.9,
+  scaleDuplicates: false,
+  maxDuplicateScale: 3,
+  labels: true,
+  fontSize: 12,
+  textColor: "#20202a",
+  haloColor: "#ffffff",
+  haloWidth: 1.5,
+  labelGap: 6,
+  labelPosition: "above",
+  allowOverlap: false,
+  duplicateSuffix: false,
+};
 
 function getInitialTheme(): UiTheme {
   if (typeof document === "undefined") return "light";
@@ -81,7 +107,7 @@ export function App() {
   const [pinJson, setPinJson] = useState("");
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMetadata, setPinMetadata] = useState<PinMetadata | null>(null);
-  const [pinStyle, setPinStyle] = useState<PinStyleOptions>({ radius: 7, fillColor: "#5b5bf2", strokeColor: "#ffffff", strokeWidth: 2, opacity: 0.9, scaleDuplicates: false, maxDuplicateScale: 3, labels: true, fontSize: 12, textColor: "#20202a", haloColor: "#ffffff", haloWidth: 1.5, labelGap: 6, labelPosition: "above", allowOverlap: true, duplicateSuffix: false });
+  const [pinStyle, setPinStyle] = useState<PinStyleOptions>(DEFAULT_PIN_STYLE);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -139,6 +165,13 @@ export function App() {
   const effectiveRoadsColor = roadsColor ?? getStyleDef(styleId).tokens.roads;
   const effectiveBuildingsColor = buildingsColor ?? getStyleDef(styleId).tokens.buildings;
   const effectiveBackgroundColor = backgroundColor ?? getStyleDef(styleId).tokens.background;
+  const pinLabelOptions = useMemo(
+    () => (pinMetadata?.labelFields ?? []).map((field) => ({
+      value: field,
+      label: `${field} · ${getLabelFieldCoverage(pins, field)}/${pins.length}`,
+    })),
+    [pinMetadata, pins],
+  );
 
   const dimsKm = useMemo(() => {
     if (!bbox) return null;
@@ -480,7 +513,7 @@ export function App() {
                     />
                     </div>
                     <div className="pin-file-row">
-                      <label className="mini-action" htmlFor="pin-file">{t.pins.chooseJson}</label>
+                      <label className="btn pin-file-button" htmlFor="pin-file">{t.pins.chooseJson}</label>
                       <input id="pin-file" type="file" accept=".json,.geojson,application/json,application/geo+json" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void handlePinFile(file); }} />
                       {pinMetadata && <span className="pin-meta">{pinMetadata.format} · {pinMetadata.coordinateFields}{pinMetadata.labelField ? ` · ${t.pins.detectedLabel}: ${pinMetadata.labelField}` : ""}</span>}
                     </div>
@@ -493,25 +526,59 @@ export function App() {
                 </PanelSection>
 
                 <PanelSection title={t.pins.styleTitle} icon={Palette}>
-                  <SwitchRow label={t.pins.showLabels} checked={pinStyle.labels} onChange={(labels) => setPinStyle((s) => ({ ...s, labels }))} />
-                  <PinSelect label={t.pins.labelField} value={pinStyle.labelField ?? ""} options={pinMetadata?.labelFields ?? []} onChange={(labelField) => setPinStyle((s) => ({ ...s, labelField: labelField || undefined }))} />
-                  <SwitchRow label={t.pins.scaleDuplicates} checked={pinStyle.scaleDuplicates} onChange={(scaleDuplicates) => setPinStyle((s) => ({ ...s, scaleDuplicates }))} />
-                  <SwitchRow label={t.pins.duplicateSuffix} checked={pinStyle.duplicateSuffix} onChange={(duplicateSuffix) => setPinStyle((s) => ({ ...s, duplicateSuffix }))} />
-                  <SwitchRow label={t.pins.allowOverlap} checked={pinStyle.allowOverlap} onChange={(allowOverlap) => setPinStyle((s) => ({ ...s, allowOverlap }))} />
-                  <div className="pin-control-grid">
-                    <PinNumber label={t.pins.radius} value={pinStyle.radius} min={1} max={40} step={1} onChange={(radius) => setPinStyle((s) => ({ ...s, radius }))} />
-                    <PinNumber label={t.pins.maxScale} value={pinStyle.maxDuplicateScale} min={1} max={10} step={0.1} onChange={(maxDuplicateScale) => setPinStyle((s) => ({ ...s, maxDuplicateScale }))} />
-                    <PinNumber label={t.pins.fontSize} value={pinStyle.fontSize} min={6} max={32} step={1} onChange={(fontSize) => setPinStyle((s) => ({ ...s, fontSize }))} />
-                    <PinNumber label={t.pins.labelGap} value={pinStyle.labelGap} min={0} max={30} step={1} onChange={(labelGap) => setPinStyle((s) => ({ ...s, labelGap }))} />
-                    <PinNumber label={t.pins.strokeWidth} value={pinStyle.strokeWidth} min={0} max={10} step={0.5} onChange={(strokeWidth) => setPinStyle((s) => ({ ...s, strokeWidth }))} />
-                    <PinNumber label={t.pins.haloWidth} value={pinStyle.haloWidth} min={0} max={10} step={0.5} onChange={(haloWidth) => setPinStyle((s) => ({ ...s, haloWidth }))} />
-                    <PinNumber label={t.pins.opacity} value={pinStyle.opacity} min={0} max={1} step={0.05} onChange={(opacity) => setPinStyle((s) => ({ ...s, opacity }))} />
+                  <div className="pin-style-group">
+                    <div className="pin-style-heading">{t.pins.pointSettings}</div>
+                    <div className="pin-control-grid">
+                      <PinNumber label={t.pins.radius} value={pinStyle.radius} min={1} max={24} step={1} onChange={(radius) => setPinStyle((s) => ({ ...s, radius }))} />
+                      <PinNumber label={t.pins.strokeWidth} value={pinStyle.strokeWidth} min={0} max={8} step={0.5} onChange={(strokeWidth) => setPinStyle((s) => ({ ...s, strokeWidth }))} />
+                      <PinNumber label={t.pins.opacity} value={pinStyle.opacity} min={0} max={1} step={0.05} onChange={(opacity) => setPinStyle((s) => ({ ...s, opacity }))} />
+                      {pinStyle.scaleDuplicates && (
+                        <PinNumber label={t.pins.maxScale} value={pinStyle.maxDuplicateScale} min={1} max={5} step={0.1} onChange={(maxDuplicateScale) => setPinStyle((s) => ({ ...s, maxDuplicateScale }))} />
+                      )}
+                    </div>
+                    <PinColor label={t.pins.fillColor} value={pinStyle.fillColor} onChange={(fillColor) => setPinStyle((s) => ({ ...s, fillColor }))} />
+                    <PinColor label={t.pins.strokeColor} value={pinStyle.strokeColor} onChange={(strokeColor) => setPinStyle((s) => ({ ...s, strokeColor }))} />
+                    <SwitchRow label={t.pins.scaleDuplicates} checked={pinStyle.scaleDuplicates} onChange={(scaleDuplicates) => setPinStyle((s) => ({ ...s, scaleDuplicates }))} />
                   </div>
-                  <PinColor label={t.pins.fillColor} value={pinStyle.fillColor} onChange={(fillColor) => setPinStyle((s) => ({ ...s, fillColor }))} />
-                  <PinColor label={t.pins.strokeColor} value={pinStyle.strokeColor} onChange={(strokeColor) => setPinStyle((s) => ({ ...s, strokeColor }))} />
-                  <PinColor label={t.pins.textColor} value={pinStyle.textColor} onChange={(textColor) => setPinStyle((s) => ({ ...s, textColor }))} />
-                  <PinColor label={t.pins.haloColor} value={pinStyle.haloColor} onChange={(haloColor) => setPinStyle((s) => ({ ...s, haloColor }))} />
-                  <PinSelect label={t.pins.position} value={pinStyle.labelPosition} options={[{ value: "above", label: t.pins.positionAbove }, { value: "right", label: t.pins.positionRight }, { value: "below", label: t.pins.positionBelow }, { value: "left", label: t.pins.positionLeft }]} onChange={(labelPosition) => setPinStyle((s) => ({ ...s, labelPosition: labelPosition as PinStyleOptions["labelPosition"] }))} />
+
+                  <div className="pin-style-group">
+                    <div className="pin-style-heading">{t.pins.labelSettings}</div>
+                    <SwitchRow label={t.pins.showLabels} checked={pinStyle.labels} onChange={(labels) => setPinStyle((s) => ({ ...s, labels }))} />
+                    {pinStyle.labels && (
+                      <>
+                        <PinSelect
+                          label={t.pins.labelField}
+                          value={pinStyle.labelField ?? ""}
+                          options={pinLabelOptions}
+                          emptyLabel={t.pins.noLabel}
+                          onChange={(labelField) => setPinStyle((s) => ({ ...s, labelField: labelField || undefined }))}
+                        />
+                        <div className="pin-control-grid">
+                          <PinNumber label={t.pins.fontSize} value={pinStyle.fontSize} min={6} max={32} step={1} onChange={(fontSize) => setPinStyle((s) => ({ ...s, fontSize }))} />
+                          <PinNumber label={t.pins.labelGap} value={pinStyle.labelGap} min={0} max={30} step={1} onChange={(labelGap) => setPinStyle((s) => ({ ...s, labelGap }))} />
+                          <PinNumber label={t.pins.haloWidth} value={pinStyle.haloWidth} min={0} max={10} step={0.5} onChange={(haloWidth) => setPinStyle((s) => ({ ...s, haloWidth }))} />
+                        </div>
+                        <PinColor label={t.pins.textColor} value={pinStyle.textColor} onChange={(textColor) => setPinStyle((s) => ({ ...s, textColor }))} />
+                        <PinColor label={t.pins.haloColor} value={pinStyle.haloColor} onChange={(haloColor) => setPinStyle((s) => ({ ...s, haloColor }))} />
+                        <PinSelect
+                          label={t.pins.position}
+                          value={pinStyle.labelPosition}
+                          options={[
+                            { value: "above", label: t.pins.positionAbove },
+                            { value: "right", label: t.pins.positionRight },
+                            { value: "below", label: t.pins.positionBelow },
+                            { value: "left", label: t.pins.positionLeft },
+                          ]}
+                          onChange={(labelPosition) => setPinStyle((s) => ({
+                            ...s,
+                            labelPosition: labelPosition as PinStyleOptions["labelPosition"],
+                          }))}
+                        />
+                        <SwitchRow label={t.pins.allowOverlap} checked={pinStyle.allowOverlap} onChange={(allowOverlap) => setPinStyle((s) => ({ ...s, allowOverlap }))} />
+                        <SwitchRow label={t.pins.duplicateSuffix} checked={pinStyle.duplicateSuffix} onChange={(duplicateSuffix) => setPinStyle((s) => ({ ...s, duplicateSuffix }))} />
+                      </>
+                    )}
+                  </div>
                 </PanelSection>
 
                 <PanelSection
@@ -863,13 +930,51 @@ export function App() {
 }
 
 function PinNumber({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
-  return <label className="pin-number"><span>{label}</span><input className="input" type="number" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Math.min(max, Math.max(min, Number(e.target.value))))} /></label>;
+  return (
+    <label className="pin-number">
+      <span>{label}</span>
+      <input
+        className="input"
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
+        }}
+      />
+    </label>
+  );
 }
 function PinColor({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return <label className="roads-color-row"><span className="roads-color-label">{label}</span><input type="color" className="roads-color-input" value={value} onChange={(e) => onChange(e.target.value)} /></label>;
 }
-function PinSelect({ label, value, options, onChange }: { label: string; value: string; options: (string | { value: string; label: string })[]; onChange: (value: string) => void }) {
-  return <label className="pin-select"><span className="field-label">{label}</span><select className="select" value={value} onChange={(e) => onChange(e.target.value)}><option value="">—</option>{options.map((option) => { const item = typeof option === "string" ? { value: option, label: option } : option; return <option key={item.value} value={item.value}>{item.label}</option>; })}</select></label>;
+function PinSelect({
+  label,
+  value,
+  options,
+  emptyLabel,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  emptyLabel?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="pin-select">
+      <span className="field-label">{label}</span>
+      <select className="select" value={value} onChange={(e) => onChange(e.target.value)}>
+        {emptyLabel !== undefined && <option value="">{emptyLabel}</option>}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 type RailItemProps = {

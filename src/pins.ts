@@ -43,8 +43,8 @@ function keyMap(record: Record<string, unknown>) {
 const PAIRS = [["latitude", "longitude"], ["lat", "lon"], ["lat", "lng"]] as const;
 const LABEL_FIELDS = ["label", "name", "title", "project", "location_name", "id"];
 
-function isScalar(value: unknown): boolean {
-  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+function isScalar(value: unknown): value is string | number | boolean {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
 /** Return scalar property keys in the stable order used by the label menu. */
@@ -53,23 +53,49 @@ export function getLabelFields(pins: Pin[], coordinateFields = ""): string[] {
   const keys = new Map<string, string>();
   for (const pin of pins) {
     for (const [key, value] of Object.entries(pin.properties ?? {})) {
-      if (!coordinateKeys.has(key.toLowerCase()) && isScalar(value)) keys.set(key.toLowerCase(), key);
+      const normalizedKey = key.toLowerCase();
+      if (!coordinateKeys.has(normalizedKey) && isScalar(value) && !keys.has(normalizedKey)) {
+        keys.set(normalizedKey, key);
+      }
     }
   }
   return [...keys.values()].sort((a, b) => {
-    const ai = LABEL_FIELDS.indexOf(a.toLowerCase()), bi = LABEL_FIELDS.indexOf(b.toLowerCase());
-    if (ai >= 0 || bi >= 0) return (ai < 0 ? LABEL_FIELDS.length : ai) - (bi < 0 ? LABEL_FIELDS.length : bi);
+    const ai = LABEL_FIELDS.indexOf(a.toLowerCase());
+    const bi = LABEL_FIELDS.indexOf(b.toLowerCase());
+    if (ai >= 0 || bi >= 0) {
+      return (ai < 0 ? LABEL_FIELDS.length : ai) - (bi < 0 ? LABEL_FIELDS.length : bi);
+    }
     return a.localeCompare(b);
   });
+}
+
+function getPropertyValue(pin: Pin, field: string): unknown {
+  const properties = pin.properties;
+  if (!properties) return undefined;
+  if (Object.prototype.hasOwnProperty.call(properties, field)) return properties[field];
+  const matchingKey = Object.keys(properties).find(
+    (key) => key.toLowerCase() === field.toLowerCase(),
+  );
+  return matchingKey === undefined ? undefined : properties[matchingKey];
+}
+
+/** Count records with a non-empty scalar value for a label field. */
+export function getLabelFieldCoverage(pins: Pin[], field: string): number {
+  return pins.filter((pin) => {
+    const value = getPropertyValue(pin, field);
+    return isScalar(value) && String(value).trim() !== "";
+  }).length;
 }
 
 /** Build the visible label from the first record in an exact-coordinate group. */
 export function displayPinLabel(pin: AggregatedPin, field: string | undefined, appendDuplicateCount = false): string | undefined {
   if (!field) return undefined;
-  const value = pin.properties?.[field];
-  if (!isScalar(value) || value === null || String(value) === "") return undefined;
+  const value = getPropertyValue(pin, field);
+  if (!isScalar(value) || String(value).trim() === "") return undefined;
   const base = String(value);
-  return appendDuplicateCount && pin.duplicateCount > 1 ? `${base} (+${pin.duplicateCount})` : base;
+  return appendDuplicateCount && pin.duplicateCount > 1
+    ? `${base} (+${pin.duplicateCount - 1})`
+    : base;
 }
 
 function makePin(record: Record<string, unknown>, lat: number, lon: number, path: string): Pin {

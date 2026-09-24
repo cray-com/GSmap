@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { aggregatePins, boundsFromPins, displayPinLabel, getLabelFields, isPinFileName, parsePinDocument, parsePinInput } from "./pins";
+import {
+  aggregatePins,
+  boundsFromPins,
+  displayPinLabel,
+  getLabelFieldCoverage,
+  getLabelFields,
+  isPinFileName,
+  parsePinDocument,
+  parsePinInput,
+} from "./pins";
 
 describe("parsePinDocument", () => {
   it("recognizes ordinary JSON upload filenames", () => {
@@ -67,16 +76,22 @@ describe("parsePinDocument", () => {
     expect(aggregatePins(pins)).toMatchObject([{ lat: 1, lon: 2, duplicateCount: 3, duplicateScale: Math.sqrt(3) }, { lat: 3, lon: 4, duplicateCount: 1, duplicateScale: 1 }]);
   });
 
-  it("orders scalar label fields and excludes coordinates", () => {
-    const pins = parsePinInput('[{"lat":1,"lon":2,"z":"Z","project":"P","name":"N","nested":{}}]').pins;
-    expect(getLabelFields(pins, "lat/lon")).toEqual(["name", "project", "z"]);
+  it("orders scalar label fields, reports coverage, and excludes coordinates", () => {
+    const pins = parsePinInput(
+      '[{"lat":1,"lon":2,"z":"Z","project":"P","Name":"N","nested":{}},{"lat":3,"lon":4,"z":"","project":"Other","name":"Second"}]',
+    ).pins;
+    expect(getLabelFields(pins, "lat/lon")).toEqual(["Name", "project", "z"]);
+    expect(getLabelFieldCoverage(pins, "project")).toBe(2);
+    expect(getLabelFieldCoverage(pins, "Name")).toBe(2);
+    expect(getLabelFieldCoverage(pins, "name")).toBe(2);
+    expect(getLabelFieldCoverage(pins, "z")).toBe(1);
   });
 
   it("builds labels from the first aggregated record", () => {
-    const pins = parsePinInput('[{"lat":1,"lon":2,"project":"P"},{"lat":1,"lon":2,"project":"Other"}]').pins;
+    const pins = parsePinInput('[{"lat":1,"lon":2,"Project":"P"},{"lat":1,"lon":2,"project":"Other"}]').pins;
     const aggregate = aggregatePins(pins)[0];
     expect(displayPinLabel(aggregate, "project")).toBe("P");
-    expect(displayPinLabel(aggregate, "project", true)).toBe("P (+2)");
+    expect(displayPinLabel(aggregate, "project", true)).toBe("P (+1)");
     expect(displayPinLabel(aggregate, "missing")).toBeUndefined();
   });
 });

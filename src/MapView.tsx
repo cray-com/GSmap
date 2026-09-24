@@ -460,20 +460,45 @@ function syncPins(map: MlMap, pins: Pin[], options: PinStyleOptions): void {
         "circle-color": options.fillColor, "circle-stroke-color": options.strokeColor,
         "circle-stroke-width": options.strokeWidth, "circle-opacity": options.opacity,
         "circle-stroke-opacity": options.opacity } });
-    const anchors: Record<PinLabelPosition, { anchor: "bottom" | "left" | "top" | "right"; offset: [number, number] }> = {
-      above: { anchor: "bottom", offset: [0, -options.labelGap / Math.max(1, options.fontSize)] },
-      right: { anchor: "left", offset: [options.labelGap / Math.max(1, options.fontSize), 0] },
-      below: { anchor: "top", offset: [0, options.labelGap / Math.max(1, options.fontSize)] },
-      left: { anchor: "right", offset: [-options.labelGap / Math.max(1, options.fontSize), 0] },
+    const anchors: Record<
+      PinLabelPosition,
+      "bottom" | "left" | "top" | "right"
+    > = {
+      above: "bottom",
+      right: "left",
+      below: "top",
+      left: "right",
     };
-    const position = anchors[options.labelPosition];
-    map.addLayer({ id: PINS_LABELS, type: "symbol", source: PINS_SOURCE,
-      filter: options.labels ? ["!", ["==", ["get", "label"], ""]] : ["==", "label", "__never__"],
-      layout: { "text-field": ["get", "label"], "text-size": options.fontSize,
-        "text-offset": position.offset, "text-anchor": position.anchor,
-        "text-allow-overlap": options.allowOverlap, "text-ignore-placement": options.allowOverlap,
-        "text-font": ["Noto Sans Regular"] },
-      paint: { "text-color": options.textColor, "text-halo-color": options.haloColor, "text-halo-width": options.haloWidth } });
+    map.addLayer({
+      id: PINS_LABELS,
+      type: "symbol",
+      source: PINS_SOURCE,
+      filter: options.labels
+        ? ["!", ["==", ["get", "label"], ""]]
+        : ["==", "label", "__never__"],
+      layout: {
+        "text-field": ["get", "label"],
+        "text-size": options.fontSize,
+        "text-anchor": anchors[options.labelPosition],
+        "text-radial-offset": [
+          "/",
+          [
+            "+",
+            ["*", options.radius, ["number", ["get", "duplicateScale"], 1]],
+            options.strokeWidth + options.labelGap,
+          ],
+          Math.max(1, options.fontSize),
+        ],
+        "text-allow-overlap": options.allowOverlap,
+        "text-ignore-placement": options.allowOverlap,
+        "text-font": ["Noto Sans Regular"],
+      },
+      paint: {
+        "text-color": options.textColor,
+        "text-halo-color": options.haloColor,
+        "text-halo-width": options.haloWidth,
+      },
+    });
   } catch { /* style replacement owns the next synchronization */ }
 }
 
