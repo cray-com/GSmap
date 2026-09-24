@@ -4,4 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: { port: 5173, host: true },
+  preview: {
+    allowedHosts: ["raspberrypi", "raspberrypi.tail9fee73.ts.net"],
+  },
 });
