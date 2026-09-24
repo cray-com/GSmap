@@ -216,29 +216,23 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     originalBackgroundColors.delete(map);
     // Paint expressions differ per style; drop the resolver cache.
     clearStyleResolveCache();
-    map.once("styledata", () => {
-      if (mapRef.current) {
-        redrawStoredBbox(mapRef.current);
-        applyLabelVisibility(mapRef.current, hideLabelsRef.current);
-        applyBuildingVisibility(mapRef.current, hideBuildingsRef.current);
-        applyRoadsColor(mapRef.current, roadsColorRef.current);
-        applyBuildingsColor(mapRef.current, buildingsColorRef.current);
-        applyBackgroundColor(mapRef.current, backgroundColorRef.current);
-        syncPins(mapRef.current, pins);
-      }
-    });
     map.setStyle(def.styleUrl);
+    return whenStyleLoaded(map, () => {
+      if (!mapRef.current) return;
+      redrawStoredBbox(mapRef.current);
+      applyLabelVisibility(mapRef.current, hideLabelsRef.current);
+      applyBuildingVisibility(mapRef.current, hideBuildingsRef.current);
+      applyRoadsColor(mapRef.current, roadsColorRef.current);
+      applyBuildingsColor(mapRef.current, buildingsColorRef.current);
+      applyBackgroundColor(mapRef.current, backgroundColorRef.current);
+      syncPins(mapRef.current, pins);
+    });
   }, [styleId]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const apply = () => syncPins(map, pins);
-    if (map.isStyleLoaded()) apply();
-    else map.once("styledata", apply);
-    return () => {
-      map.off("styledata", apply);
-    };
+    return whenStyleLoaded(map, () => syncPins(map, pins));
   }, [pins]);
 
   // Toggle label visibility without reloading the style.
@@ -375,7 +369,20 @@ const PINS_SOURCE = "user-pins";
 const PINS_CIRCLE = "user-pins-circle";
 const PINS_LABELS = "user-pins-labels";
 
+function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
+  const apply = () => {
+    if (!map.isStyleLoaded()) return;
+    map.off("styledata", apply);
+    callback();
+  };
+  if (map.isStyleLoaded()) apply();
+  else map.on("styledata", apply);
+  return () => map.off("styledata", apply);
+}
+
 function syncPins(map: MlMap, pins: Pin[]) {
+  if (!map.isStyleLoaded()) return;
+
   const data: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
     features: pins.map((pin, index) => ({
@@ -414,6 +421,7 @@ function syncPins(map: MlMap, pins: Pin[]) {
           "text-offset": [0, 1.15],
           "text-anchor": "top",
           "text-allow-overlap": true,
+          "text-font": ["Noto Sans Regular"],
         },
         paint: {
           "text-color": "#20202a",
@@ -423,8 +431,7 @@ function syncPins(map: MlMap, pins: Pin[]) {
       });
     }
   } catch {
-    // The style may still be swapping; retry once it is idle.
-    map.once("idle", () => syncPins(map, pins));
+    // Style lifecycle events will retry once the style structure is ready.
   }
 }
 
@@ -442,7 +449,7 @@ function redrawStoredBbox(map: MlMap) {
 function applyLabelVisibility(map: MlMap, hide: boolean) {
   const visibility = hide ? "none" : "visible";
   map.getStyle().layers.forEach((layer) => {
-    if (layer.type === "symbol") {
+    if (layer.type === "symbol" && layer.id !== PINS_LABELS) {
       map.setLayoutProperty(layer.id, "visibility", visibility);
     }
   });
