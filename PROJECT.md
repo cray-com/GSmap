@@ -46,13 +46,11 @@ Schrift- und Theme-Anpassungen gehören zu Ausbaustufe 2. Der bestehende SVG-Exp
 
 `bounds`, `id` und `label` sind optional. `pins` ist erforderlich. Koordinaten werden als WGS84-Breitengrad und Längengrad interpretiert.
 
-## Pin-Import und Templates
+## Pin-Import und native Punktdarstellung
 
-Der Import läuft vollständig im Browser. Unterstützt werden der dokumentierte `{pins:[{lat,lon,...}], bounds?}`-Vertrag, GeoJSON-`FeatureCollection` mit Point-Features (`coordinates` ist `[lon,lat]`) und Top-Level-Arrays mit case-insensitive `latitude/longitude`, `lat/lon` oder `lat/lng`. Der erkannte Adapter und die Koordinatenfelder werden angezeigt; Original-Eigenschaften bleiben erhalten. Beschriftungen werden deterministisch aus `label`, `name`, `title`, `project`, `location_name`, `id` gewählt.
+Der Import läuft vollständig im Browser. Unterstützt werden der dokumentierte `{pins:[{lat,lon,...}], bounds?}`-Vertrag, GeoJSON-`FeatureCollection` mit Point-Features (`coordinates` ist `[lon,lat]`) und Top-Level-Arrays mit case-insensitive `latitude/longitude`, `lat/lon` oder `lat/lng`. Der erkannte Adapter und die Koordinatenfelder werden angezeigt; Original-Eigenschaften bleiben erhalten. Beschriftungsfelder werden aus skalaren Eigenschaften erzeugt (Koordinaten ausgeschlossen), bevorzugt `label`, `name`, `title`, `project`, `location_name`, `id`, danach alphabetisch. Das automatisch gewählte Feld kann im nativen Punktmenü geändert werden.
 
-Identische Koordinaten werden zu einem Pin aggregiert. Die Größe skaliert mit `sqrt(duplicateCount)` und ist begrenzt; `duplicateCount` und `duplicateScale` stehen im Template zur Verfügung. Es gibt keine räumliche Verschiebung und kein erforderliches Badge.
-
-HTML- und CSS-Pinvorlagen werden als sicherer, absichtlich kleiner Subset behandelt: `div`, `span`, Text und Klassen sowie normale CSS-Selektoren und Layout-/Box-Eigenschaften (unter anderem Flexbox, Abstände, Rahmen und Transformations). Platzhalter sind `{{field}}` und werden HTML-escaped. JavaScript, Event-Handler, iframe/object/embed, externe URLs, `url()` und `@import` werden abgelehnt. Die Vorlage wird zu einem hochauflösenden MapLibre-Rasterbild gerendert, dadurch sind Vorschau, Map-Style-Wechsel und PNG identisch; SVG bleibt pinfrei. Uploads akzeptieren `.json`, `.geojson`, `.html` und `.css`.
+Identische Koordinaten werden zu einem Punkt aggregiert, ohne räumliche Verschiebung. Die native Circle-Layer-Größe kann optional mit `sqrt(duplicateCount)` skaliert werden und hat eine konfigurierbare Obergrenze; Labels skalieren nie. Eine separate native Symbol-Layer bietet die konfigurierbaren Beschriftungen. PNG enthält beide Layer, SVG bleibt unverändert und enthält keine Nutzerpunkte.
 
 ## Später
 

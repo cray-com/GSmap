@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { aggregatePins, boundsFromPins, isPinFileName, parsePinDocument, parsePinInput } from "./pins";
-import {
-  DEFAULT_PIN_CSS,
-  DEFAULT_PIN_TEMPLATE,
-  escapeHtml,
-  renderPinTemplate,
-  sanitizePinCss,
-  sanitizePinTemplate,
-} from "./pinTemplate";
+import { aggregatePins, boundsFromPins, displayPinLabel, getLabelFields, isPinFileName, parsePinDocument, parsePinInput } from "./pins";
 
 describe("parsePinDocument", () => {
   it("recognizes ordinary JSON upload filenames", () => {
@@ -75,19 +67,16 @@ describe("parsePinDocument", () => {
     expect(aggregatePins(pins)).toMatchObject([{ lat: 1, lon: 2, duplicateCount: 3, duplicateScale: Math.sqrt(3) }, { lat: 3, lon: 4, duplicateCount: 1, duplicateScale: 1 }]);
   });
 
-  it("accepts the default template and CSS", () => {
-    expect(() => sanitizePinTemplate(DEFAULT_PIN_TEMPLATE)).not.toThrow();
-    expect(() => sanitizePinCss(DEFAULT_PIN_CSS)).not.toThrow();
-    expect(() => sanitizePinCss(
-      ".pin { display: flex; gap: 4px; padding: 6px 9px; } .pin-label { transform: translateY(1px); }",
-    )).not.toThrow();
+  it("orders scalar label fields and excludes coordinates", () => {
+    const pins = parsePinInput('[{"lat":1,"lon":2,"z":"Z","project":"P","name":"N","nested":{}}]').pins;
+    expect(getLabelFields(pins, "lat/lon")).toEqual(["name", "project", "z"]);
   });
 
-  it("escapes template values and rejects active or remote content", () => {
-    expect(escapeHtml('<x>&')).toBe("&lt;x&gt;&amp;");
-    expect(renderPinTemplate("<div>{{label}}</div>", { label: "<script>" }))
-      .toBe("<div>&lt;script&gt;</div>");
-    expect(() => sanitizePinTemplate('<img src="https://example.test/x">')).toThrow();
-    expect(() => sanitizePinCss('@import url(https://example.test/x);')).toThrow();
+  it("builds labels from the first aggregated record", () => {
+    const pins = parsePinInput('[{"lat":1,"lon":2,"project":"P"},{"lat":1,"lon":2,"project":"Other"}]').pins;
+    const aggregate = aggregatePins(pins)[0];
+    expect(displayPinLabel(aggregate, "project")).toBe("P");
+    expect(displayPinLabel(aggregate, "project", true)).toBe("P (+2)");
+    expect(displayPinLabel(aggregate, "missing")).toBeUndefined();
   });
 });

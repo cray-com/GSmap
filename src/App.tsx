@@ -19,7 +19,7 @@ import {
 import { LicensePage } from "./LicensePage";
 import { PrivacyPage } from "./PrivacyPage";
 import { Logo } from "./Logo";
-import { MapView, type MapHandle } from "./MapView";
+import { MapView, type MapHandle, type PinStyleOptions } from "./MapView";
 import { searchPlace, parseCoordinates, type SearchResult } from "./nominatim";
 import {
   centerOfBbox,
@@ -36,7 +36,6 @@ import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
 import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
 import type { BBox } from "./types";
 import { boundsFromPins, isPinFileName, parsePinInput, type Pin, type PinMetadata } from "./pins";
-import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
 
 type UiTheme = "light" | "dark";
 
@@ -82,10 +81,7 @@ export function App() {
   const [pinJson, setPinJson] = useState("");
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMetadata, setPinMetadata] = useState<PinMetadata | null>(null);
-  const [pinTemplate, setPinTemplate] = useState(DEFAULT_PIN_TEMPLATE);
-  const [pinCss, setPinCss] = useState(DEFAULT_PIN_CSS);
-  const [pinTemplateDraft, setPinTemplateDraft] = useState(DEFAULT_PIN_TEMPLATE);
-  const [pinCssDraft, setPinCssDraft] = useState(DEFAULT_PIN_CSS);
+  const [pinStyle, setPinStyle] = useState<PinStyleOptions>({ radius: 7, fillColor: "#5b5bf2", strokeColor: "#ffffff", strokeWidth: 2, opacity: 0.9, scaleDuplicates: false, maxDuplicateScale: 3, labels: true, fontSize: 12, textColor: "#20202a", haloColor: "#ffffff", haloWidth: 1.5, labelGap: 6, labelPosition: "above", allowOverlap: true, duplicateSuffix: false });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -205,6 +201,7 @@ export function App() {
       const document = parsePinInput(text);
       setPins(document.pins);
       setPinMetadata(document.metadata);
+      setPinStyle((current) => ({ ...current, labelField: document.metadata.labelField }));
       setPinJson(text);
       setStatusMsg(null);
       setStatusError(false);
@@ -220,11 +217,6 @@ export function App() {
       setStatusMsg(err instanceof Error ? err.message : String(err));
       setStatusError(true);
     }
-  }
-
-  function handlePinRenderError(message: string) {
-    setStatusMsg(message);
-    setStatusError(true);
   }
 
   function handleLoadPins(e: React.FormEvent) {
@@ -246,43 +238,6 @@ export function App() {
     }
   }
 
-  async function handleTemplateFile(file: File, kind: "html" | "css") {
-    if (!file.name.toLowerCase().endsWith(`.${kind}`)) {
-      setStatusMsg(kind === "html" ? t.pins.chooseHtml : t.pins.chooseCss);
-      setStatusError(true);
-      return;
-    }
-    try {
-      const text = await file.text();
-      if (kind === "html") {
-        sanitizePinTemplate(text);
-        setPinTemplateDraft(text);
-      } else {
-        sanitizePinCss(text);
-        setPinCssDraft(text);
-      }
-      setStatusMsg(null);
-      setStatusError(false);
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-      setStatusError(true);
-    }
-  }
-
-  function applyPinTemplate() {
-    try {
-      sanitizePinTemplate(pinTemplateDraft);
-      sanitizePinCss(pinCssDraft);
-      setPinTemplate(pinTemplateDraft);
-      setPinCss(pinCssDraft);
-      setStatusMsg(null);
-      setStatusError(false);
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : t.pins.templateError);
-      setStatusError(true);
-    }
-  }
-
   function handlePinDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     const file = event.dataTransfer.files[0]; if (file) void handlePinFile(file);
@@ -292,6 +247,7 @@ export function App() {
     setPins([]);
     setPinMetadata(null);
     setPinJson("");
+    setPinStyle((current) => ({ ...current, labelField: undefined }));
     setStatusMsg(null);
     setStatusError(false);
   }
@@ -536,14 +492,26 @@ export function App() {
                   </form>
                 </PanelSection>
 
-                <PanelSection title={t.pins.customTitle} icon={Palette}>
-                  <label className="field-label" htmlFor="pin-template">{t.pins.templateLabel}</label>
-                  <textarea id="pin-template" className="input pin-code-input" value={pinTemplateDraft} onChange={(e) => setPinTemplateDraft(e.target.value)} spellCheck={false} />
-                  <label className="mini-action" htmlFor="pin-html-file">{t.pins.chooseHtml}</label><input className="pin-code-file" id="pin-html-file" type="file" accept=".html,text/html" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleTemplateFile(file, "html"); }} />
-                  <label className="field-label" htmlFor="pin-css">{t.pins.cssLabel}</label>
-                  <textarea id="pin-css" className="input pin-code-input" value={pinCssDraft} onChange={(e) => setPinCssDraft(e.target.value)} spellCheck={false} />
-                  <label className="mini-action" htmlFor="pin-css-file">{t.pins.chooseCss}</label><input className="pin-code-file" id="pin-css-file" type="file" accept=".css,text/css" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleTemplateFile(file, "css"); }} />
-                  <div className="pin-actions"><button className="btn field-action-button" type="button" onClick={applyPinTemplate}>{t.pins.applyTemplate}</button><button className="mini-action" type="button" onClick={() => { setPinTemplateDraft(DEFAULT_PIN_TEMPLATE); setPinCssDraft(DEFAULT_PIN_CSS); setPinTemplate(DEFAULT_PIN_TEMPLATE); setPinCss(DEFAULT_PIN_CSS); }}>{t.pins.resetTemplate}</button><span className="pin-meta">{"{{field}}"} · duplicateCount · duplicateScale</span></div>
+                <PanelSection title={t.pins.styleTitle} icon={Palette}>
+                  <SwitchRow label={t.pins.showLabels} checked={pinStyle.labels} onChange={(labels) => setPinStyle((s) => ({ ...s, labels }))} />
+                  <PinSelect label={t.pins.labelField} value={pinStyle.labelField ?? ""} options={pinMetadata?.labelFields ?? []} onChange={(labelField) => setPinStyle((s) => ({ ...s, labelField: labelField || undefined }))} />
+                  <SwitchRow label={t.pins.scaleDuplicates} checked={pinStyle.scaleDuplicates} onChange={(scaleDuplicates) => setPinStyle((s) => ({ ...s, scaleDuplicates }))} />
+                  <SwitchRow label={t.pins.duplicateSuffix} checked={pinStyle.duplicateSuffix} onChange={(duplicateSuffix) => setPinStyle((s) => ({ ...s, duplicateSuffix }))} />
+                  <SwitchRow label={t.pins.allowOverlap} checked={pinStyle.allowOverlap} onChange={(allowOverlap) => setPinStyle((s) => ({ ...s, allowOverlap }))} />
+                  <div className="pin-control-grid">
+                    <PinNumber label={t.pins.radius} value={pinStyle.radius} min={1} max={40} step={1} onChange={(radius) => setPinStyle((s) => ({ ...s, radius }))} />
+                    <PinNumber label={t.pins.maxScale} value={pinStyle.maxDuplicateScale} min={1} max={10} step={0.1} onChange={(maxDuplicateScale) => setPinStyle((s) => ({ ...s, maxDuplicateScale }))} />
+                    <PinNumber label={t.pins.fontSize} value={pinStyle.fontSize} min={6} max={32} step={1} onChange={(fontSize) => setPinStyle((s) => ({ ...s, fontSize }))} />
+                    <PinNumber label={t.pins.labelGap} value={pinStyle.labelGap} min={0} max={30} step={1} onChange={(labelGap) => setPinStyle((s) => ({ ...s, labelGap }))} />
+                    <PinNumber label={t.pins.strokeWidth} value={pinStyle.strokeWidth} min={0} max={10} step={0.5} onChange={(strokeWidth) => setPinStyle((s) => ({ ...s, strokeWidth }))} />
+                    <PinNumber label={t.pins.haloWidth} value={pinStyle.haloWidth} min={0} max={10} step={0.5} onChange={(haloWidth) => setPinStyle((s) => ({ ...s, haloWidth }))} />
+                    <PinNumber label={t.pins.opacity} value={pinStyle.opacity} min={0} max={1} step={0.05} onChange={(opacity) => setPinStyle((s) => ({ ...s, opacity }))} />
+                  </div>
+                  <PinColor label={t.pins.fillColor} value={pinStyle.fillColor} onChange={(fillColor) => setPinStyle((s) => ({ ...s, fillColor }))} />
+                  <PinColor label={t.pins.strokeColor} value={pinStyle.strokeColor} onChange={(strokeColor) => setPinStyle((s) => ({ ...s, strokeColor }))} />
+                  <PinColor label={t.pins.textColor} value={pinStyle.textColor} onChange={(textColor) => setPinStyle((s) => ({ ...s, textColor }))} />
+                  <PinColor label={t.pins.haloColor} value={pinStyle.haloColor} onChange={(haloColor) => setPinStyle((s) => ({ ...s, haloColor }))} />
+                  <PinSelect label={t.pins.position} value={pinStyle.labelPosition} options={[{ value: "above", label: t.pins.positionAbove }, { value: "right", label: t.pins.positionRight }, { value: "below", label: t.pins.positionBelow }, { value: "left", label: t.pins.positionLeft }]} onChange={(labelPosition) => setPinStyle((s) => ({ ...s, labelPosition: labelPosition as PinStyleOptions["labelPosition"] }))} />
                 </PanelSection>
 
                 <PanelSection
@@ -851,9 +819,7 @@ export function App() {
           onSelect={setBbox}
           onAcceptSelection={handleAcceptSelection}
           pins={pins}
-          pinTemplate={pinTemplate}
-          pinCss={pinCss}
-          onPinRenderError={handlePinRenderError}
+          pinStyle={pinStyle}
         />
       )}
       <AnimatePresence mode="wait">
@@ -894,6 +860,16 @@ export function App() {
       </AnimatePresence>
     </div>
   );
+}
+
+function PinNumber({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
+  return <label className="pin-number"><span>{label}</span><input className="input" type="number" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Math.min(max, Math.max(min, Number(e.target.value))))} /></label>;
+}
+function PinColor({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return <label className="roads-color-row"><span className="roads-color-label">{label}</span><input type="color" className="roads-color-input" value={value} onChange={(e) => onChange(e.target.value)} /></label>;
+}
+function PinSelect({ label, value, options, onChange }: { label: string; value: string; options: (string | { value: string; label: string })[]; onChange: (value: string) => void }) {
+  return <label className="pin-select"><span className="field-label">{label}</span><select className="select" value={value} onChange={(e) => onChange(e.target.value)}><option value="">—</option>{options.map((option) => { const item = typeof option === "string" ? { value: option, label: option } : option; return <option key={item.value} value={item.value}>{item.label}</option>; })}</select></label>;
 }
 
 type RailItemProps = {

@@ -9,7 +9,7 @@ export type Pin = {
 };
 
 export type PinFormat = "documented pins" | "GeoJSON FeatureCollection" | "record array";
-export type PinMetadata = { format: PinFormat; coordinateFields: string; labelField?: string };
+export type PinMetadata = { format: PinFormat; coordinateFields: string; labelField?: string; labelFields: string[] };
 export type PinDocument = { pins: Pin[]; bounds?: BBox };
 export type ParsedPinDocument = PinDocument & { metadata: PinMetadata };
 
@@ -42,6 +42,35 @@ function keyMap(record: Record<string, unknown>) {
 }
 const PAIRS = [["latitude", "longitude"], ["lat", "lon"], ["lat", "lng"]] as const;
 const LABEL_FIELDS = ["label", "name", "title", "project", "location_name", "id"];
+
+function isScalar(value: unknown): boolean {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+/** Return scalar property keys in the stable order used by the label menu. */
+export function getLabelFields(pins: Pin[], coordinateFields = ""): string[] {
+  const coordinateKeys = new Set(coordinateFields.toLowerCase().split(/[\\/, ]+/).filter(Boolean));
+  const keys = new Map<string, string>();
+  for (const pin of pins) {
+    for (const [key, value] of Object.entries(pin.properties ?? {})) {
+      if (!coordinateKeys.has(key.toLowerCase()) && isScalar(value)) keys.set(key.toLowerCase(), key);
+    }
+  }
+  return [...keys.values()].sort((a, b) => {
+    const ai = LABEL_FIELDS.indexOf(a.toLowerCase()), bi = LABEL_FIELDS.indexOf(b.toLowerCase());
+    if (ai >= 0 || bi >= 0) return (ai < 0 ? LABEL_FIELDS.length : ai) - (bi < 0 ? LABEL_FIELDS.length : bi);
+    return a.localeCompare(b);
+  });
+}
+
+/** Build the visible label from the first record in an exact-coordinate group. */
+export function displayPinLabel(pin: AggregatedPin, field: string | undefined, appendDuplicateCount = false): string | undefined {
+  if (!field) return undefined;
+  const value = pin.properties?.[field];
+  if (!isScalar(value) || value === null || String(value) === "") return undefined;
+  const base = String(value);
+  return appendDuplicateCount && pin.duplicateCount > 1 ? `${base} (+${pin.duplicateCount})` : base;
+}
 
 function makePin(record: Record<string, unknown>, lat: number, lon: number, path: string): Pin {
   validateCoords(lat, lon, path);
@@ -76,7 +105,7 @@ export function parsePinInput(input: string): ParsedPinDocument {
   if (isRecord(value) && Array.isArray(value.pins)) {
     const parsed = parseRecords(value.pins, "pins");
     const bounds = value.bounds === undefined ? undefined : parseBounds(value.bounds);
-    return { ...(bounds ? { bounds } : {}), pins: parsed.pins, metadata: { format: "documented pins", coordinateFields: parsed.fields, labelField: findLabelField(parsed.pins) } };
+    return { ...(bounds ? { bounds } : {}), pins: parsed.pins, metadata: { format: "documented pins", coordinateFields: parsed.fields, labelField: findLabelField(parsed.pins, parsed.fields), labelFields: getLabelFields(parsed.pins, parsed.fields) } };
   }
   if (isRecord(value) && value.type === "FeatureCollection" && Array.isArray(value.features)) {
     const pins = value.features.map((feature, index) => {
@@ -86,19 +115,16 @@ export function parsePinInput(input: string): ParsedPinDocument {
       if (feature.id !== undefined && properties.id === undefined) properties.id = feature.id;
       return makePin(properties, numberField(coordinates[1], `features[${index}].geometry.coordinates[1]`), numberField(coordinates[0], `features[${index}].geometry.coordinates[0]`), `features[${index}]`);
     });
-    return { pins, metadata: { format: "GeoJSON FeatureCollection", coordinateFields: "coordinates[lon, lat]", labelField: findLabelField(pins) } };
+    return { pins, metadata: { format: "GeoJSON FeatureCollection", coordinateFields: "coordinates[lon, lat]", labelField: findLabelField(pins), labelFields: getLabelFields(pins) } };
   }
   if (Array.isArray(value)) {
     const parsed = parseRecords(value, "records");
-    return { pins: parsed.pins, metadata: { format: "record array", coordinateFields: parsed.fields, labelField: findLabelField(parsed.pins) } };
+    return { pins: parsed.pins, metadata: { format: "record array", coordinateFields: parsed.fields, labelField: findLabelField(parsed.pins, parsed.fields), labelFields: getLabelFields(parsed.pins, parsed.fields) } };
   }
   throw new Error("Supported roots are {pins:[...]}, a GeoJSON FeatureCollection, or an array of records.");
 }
-function findLabelField(pins: Pin[]): string | undefined {
-  const first = pins[0]?.properties;
-  if (!first) return undefined;
-  const keys = keyMap(first);
-  return LABEL_FIELDS.map((field) => keys.get(field)).find((key) => key !== undefined);
+function findLabelField(pins: Pin[], coordinateFields = ""): string | undefined {
+  return getLabelFields(pins, coordinateFields)[0];
 }
 /** Backwards-compatible documented adapter. */
 export function parsePinDocument(input: string): PinDocument {
