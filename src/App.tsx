@@ -513,12 +513,12 @@ export function App() {
                     />
                     </div>
                     <div className="pin-file-row">
-                      <label className="btn pin-file-button" htmlFor="pin-file">{t.pins.chooseJson}</label>
+                      <label className="mini-action pin-file-button" htmlFor="pin-file">{t.pins.chooseJson}</label>
                       <input id="pin-file" type="file" accept=".json,.geojson,application/json,application/geo+json" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void handlePinFile(file); }} />
                       {pinMetadata && <span className="pin-meta">{pinMetadata.format} · {pinMetadata.coordinateFields}{pinMetadata.labelField ? ` · ${t.pins.detectedLabel}: ${pinMetadata.labelField}` : ""}</span>}
                     </div>
                     <div className="pin-actions">
-                      <button className="btn field-action-button" type="submit">{t.pins.load}</button>
+                      <button className="mini-action" type="submit">{t.pins.load}</button>
                       <button className="mini-action" type="button" onClick={handleClearPins}>{t.pins.clear}</button>
                       <span className="pin-count">{t.pins.count(pins.length)}</span>
                     </div>
