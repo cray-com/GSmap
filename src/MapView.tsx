@@ -36,6 +36,7 @@ type Props = {
   pins: Pin[];
   pinTemplate?: string;
   pinCss?: string;
+  onPinRenderError?: (message: string) => void;
 };
 
 // Pixel anchor (relative to the map container) used to position the
@@ -47,7 +48,21 @@ type HandleRole = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLE_ROLES: HandleRole[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 export const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { styleId, hideLabels, hideBuildings, roadsColor, buildingsColor, backgroundColor, editLabels, onSelect, onAcceptSelection, pins, pinTemplate = DEFAULT_PIN_TEMPLATE, pinCss = DEFAULT_PIN_CSS },
+  {
+    styleId,
+    hideLabels,
+    hideBuildings,
+    roadsColor,
+    buildingsColor,
+    backgroundColor,
+    editLabels,
+    onSelect,
+    onAcceptSelection,
+    pins,
+    pinTemplate = DEFAULT_PIN_TEMPLATE,
+    pinCss = DEFAULT_PIN_CSS,
+    onPinRenderError,
+  },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,6 +91,8 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   pinTemplateRef.current = pinTemplate;
   const pinCssRef = useRef(pinCss);
   pinCssRef.current = pinCss;
+  const onPinRenderErrorRef = useRef(onPinRenderError);
+  onPinRenderErrorRef.current = onPinRenderError;
 
   const selectingRef = useRef(false);
   const startPxRef = useRef<{ x: number; y: number } | null>(null);
@@ -234,7 +251,13 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       applyRoadsColor(mapRef.current, roadsColorRef.current);
       applyBuildingsColor(mapRef.current, buildingsColorRef.current);
       applyBackgroundColor(mapRef.current, backgroundColorRef.current);
-      void syncPins(mapRef.current, pinsRef.current, pinTemplateRef.current, pinCssRef.current);
+      void syncPins(
+        mapRef.current,
+        pinsRef.current,
+        pinTemplateRef.current,
+        pinCssRef.current,
+        onPinRenderErrorRef.current,
+      );
     };
     map.on("idle", restoreOverlays);
     map.setStyle(def.styleUrl);
@@ -246,7 +269,15 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    return whenStyleLoaded(map, () => { void syncPins(map, pins, pinTemplateRef.current, pinCssRef.current); });
+    return whenStyleLoaded(map, () => {
+      void syncPins(
+        map,
+        pins,
+        pinTemplateRef.current,
+        pinCssRef.current,
+        onPinRenderErrorRef.current,
+      );
+    });
   }, [pins, pinTemplate, pinCss]);
 
   // Toggle label visibility without reloading the style.
@@ -383,6 +414,30 @@ const PINS_SOURCE = "user-pins";
 const PINS_CIRCLE = "user-pins-circle";
 const PINS_LABELS = "user-pins-labels";
 const pinSyncVersions = new WeakMap<MlMap, number>();
+const pinRasterCache = new Map<string, Promise<ImageData>>();
+const MAX_RASTER_CACHE_ENTRIES = 500;
+
+function cachedRasterizePin(
+  template: string,
+  css: string,
+  values: Record<string, unknown>,
+): Promise<ImageData> {
+  const key = JSON.stringify([template, css, values]);
+  const cached = pinRasterCache.get(key);
+  if (cached) return cached;
+
+  if (pinRasterCache.size >= MAX_RASTER_CACHE_ENTRIES) {
+    const oldestKey = pinRasterCache.keys().next().value;
+    if (oldestKey !== undefined) pinRasterCache.delete(oldestKey);
+  }
+
+  const raster = rasterizePin(template, css, values).catch((error) => {
+    pinRasterCache.delete(key);
+    throw error;
+  });
+  pinRasterCache.set(key, raster);
+  return raster;
+}
 
 function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
   if ((map.getStyle()?.layers?.length ?? 0) > 0) {
@@ -400,7 +455,13 @@ function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
   };
 }
 
-async function syncPins(map: MlMap, pins: Pin[], template = DEFAULT_PIN_TEMPLATE, css = DEFAULT_PIN_CSS): Promise<void> {
+async function syncPins(
+  map: MlMap,
+  pins: Pin[],
+  template = DEFAULT_PIN_TEMPLATE,
+  css = DEFAULT_PIN_CSS,
+  onError?: (message: string) => void,
+): Promise<void> {
   if ((map.getStyle()?.layers?.length ?? 0) === 0) return;
   const version = (pinSyncVersions.get(map) ?? 0) + 1;
   pinSyncVersions.set(map, version);
@@ -420,61 +481,74 @@ async function syncPins(map: MlMap, pins: Pin[], template = DEFAULT_PIN_TEMPLATE
       geometry: { type: "Point", coordinates: [pin.lon, pin.lat] },
     })),
   };
-  sanitizePinCss(css);
-  sanitizePinTemplate(template);
   let images: { id: string; image: ImageData }[];
   try {
-    images = await Promise.all(grouped.map((pin, index) => rasterizePin(
-      template,
-      css,
-      { ...pin.properties, ...pin, label: pin.label ?? "" },
-    ).then((image) => ({ id: `user-pin-${index}`, image }))));
-  } catch {
+    sanitizePinCss(css);
+    sanitizePinTemplate(template);
+    images = await Promise.all(
+      grouped.map(async (pin, index) => ({
+        id: `user-pin-${index}`,
+        image: await cachedRasterizePin(
+          template,
+          css,
+          { ...pin.properties, ...pin, label: pin.label ?? "" },
+        ),
+      })),
+    );
+  } catch (error) {
+    onError?.(error instanceof Error ? error.message : String(error));
     return;
   }
-  if (pinSyncVersions.get(map) !== version || !map.isStyleLoaded()) return;
+  if (pinSyncVersions.get(map) !== version || (map.getStyle()?.layers?.length ?? 0) === 0) {
+    return;
+  }
+
   try {
-    const wanted = new Set(images.map(({ id }) => id));
+    // Rebuild the image-backed layers atomically. MapLibre's updateImage can
+    // corrupt icons when a template changes their dimensions.
+    if (map.getLayer(PINS_LABELS)) map.removeLayer(PINS_LABELS);
+    if (map.getLayer(PINS_CIRCLE)) map.removeLayer(PINS_CIRCLE);
     for (const image of map.listImages()) {
-      if (image.startsWith("user-pin-") && !wanted.has(image)) map.removeImage(image);
+      if (image.startsWith("user-pin-")) map.removeImage(image);
     }
     for (const { id, image } of images) {
-      if (map.hasImage(id)) map.updateImage(id, image);
-      else map.addImage(id, image, { pixelRatio: 2 });
+      map.addImage(id, image, { pixelRatio: 2 });
     }
+
     const source = map.getSource(PINS_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (source) source.setData(data);
     else map.addSource(PINS_SOURCE, { type: "geojson", data });
-    if (!map.getLayer(PINS_CIRCLE)) {
-      map.addLayer({
-        id: PINS_CIRCLE,
-        type: "symbol",
-        source: PINS_SOURCE,
-        layout: {
-          "icon-image": ["get", "icon"],
-          "icon-size": ["get", "duplicateScale"],
-          "icon-anchor": "bottom",
-          "icon-allow-overlap": true,
-        },
-      });
-    }
-    if (!map.getLayer(PINS_LABELS)) {
-      map.addLayer({
-        id: PINS_LABELS,
-        type: "symbol",
-        source: PINS_SOURCE,
-        filter: ["==", "label", "__never__"],
-        layout: {
-          "text-field": ["get", "label"],
-          "text-size": 12,
-          "text-offset": [0, 1.15],
-          "text-anchor": "top",
-          "text-allow-overlap": true,
-          "text-font": ["Noto Sans Regular"],
-        },
-        paint: { "text-color": "#20202a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
-      });
-    }
+
+    map.addLayer({
+      id: PINS_CIRCLE,
+      type: "symbol",
+      source: PINS_SOURCE,
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": ["get", "duplicateScale"],
+        "icon-anchor": "bottom",
+        "icon-allow-overlap": true,
+      },
+    });
+    map.addLayer({
+      id: PINS_LABELS,
+      type: "symbol",
+      source: PINS_SOURCE,
+      filter: ["==", "label", "__never__"],
+      layout: {
+        "text-field": ["get", "label"],
+        "text-size": 12,
+        "text-offset": [0, 1.15],
+        "text-anchor": "top",
+        "text-allow-overlap": true,
+        "text-font": ["Noto Sans Regular"],
+      },
+      paint: {
+        "text-color": "#20202a",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5,
+      },
+    });
   } catch {
     // A simultaneous style replacement owns the next synchronization.
   }
@@ -494,7 +568,11 @@ function redrawStoredBbox(map: MlMap) {
 function applyLabelVisibility(map: MlMap, hide: boolean) {
   const visibility = hide ? "none" : "visible";
   map.getStyle().layers.forEach((layer) => {
-    if (layer.type === "symbol" && layer.id !== PINS_LABELS) {
+    if (
+      layer.type === "symbol" &&
+      layer.id !== PINS_LABELS &&
+      layer.id !== PINS_CIRCLE
+    ) {
       map.setLayoutProperty(layer.id, "visibility", visibility);
     }
   });

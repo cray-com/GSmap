@@ -129,7 +129,7 @@ export function aggregatePins(pins: Pin[], maxScale = 3): AggregatedPin[] {
 }
 
 /** Compute a useful viewport around imported pins when the document has no bounds. */
-export function boundsFromPins(pins: Pin[], paddingRatio = 0.1): BBox | null {
+export function boundsFromPins(pins: Pin[], paddingRatio = 0.2): BBox | null {
   if (pins.length === 0) return null;
   const lats = pins.map((pin) => pin.lat);
   const lons = pins.map((pin) => pin.lon);

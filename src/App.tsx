@@ -203,8 +203,11 @@ export function App() {
   function loadPinText(text: string) {
     try {
       const document = parsePinInput(text);
-      setPins(document.pins); setPinMetadata(document.metadata); setPinJson(text);
-      setStatusMsg(null); setStatusError(false);
+      setPins(document.pins);
+      setPinMetadata(document.metadata);
+      setPinJson(text);
+      setStatusMsg(null);
+      setStatusError(false);
       const importedBounds = document.bounds ?? boundsFromPins(document.pins);
       if (importedBounds) {
         mapRef.current?.fitBbox(importedBounds);
@@ -213,7 +216,15 @@ export function App() {
           mapRef.current?.flyTo(document.pins[0].lon, document.pins[0].lat, 14);
         }
       }
-    } catch (err) { setStatusMsg(err instanceof Error ? err.message : String(err)); setStatusError(true); }
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+      setStatusError(true);
+    }
+  }
+
+  function handlePinRenderError(message: string) {
+    setStatusMsg(message);
+    setStatusError(true);
   }
 
   function handleLoadPins(e: React.FormEvent) {
@@ -842,6 +853,7 @@ export function App() {
           pins={pins}
           pinTemplate={pinTemplate}
           pinCss={pinCss}
+          onPinRenderError={handlePinRenderError}
         />
       )}
       <AnimatePresence mode="wait">

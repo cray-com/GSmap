@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { aggregatePins, boundsFromPins, isPinFileName, parsePinDocument, parsePinInput } from "./pins";
-import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, escapeHtml, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
+import {
+  DEFAULT_PIN_CSS,
+  DEFAULT_PIN_TEMPLATE,
+  escapeHtml,
+  renderPinTemplate,
+  sanitizePinCss,
+  sanitizePinTemplate,
+} from "./pinTemplate";
 
 describe("parsePinDocument", () => {
   it("recognizes ordinary JSON upload filenames", () => {
@@ -59,7 +66,7 @@ describe("parsePinDocument", () => {
   });
 
   it("computes padded bounds for imported pins", () => {
-    expect(boundsFromPins([{ lat: 10, lon: 20 }, { lat: 12, lon: 24 }])).toEqual({ south: 9.8, west: 19.6, north: 12.2, east: 24.4 });
+    expect(boundsFromPins([{ lat: 10, lon: 20 }, { lat: 12, lon: 24 }])).toEqual({ south: 9.6, west: 19.2, north: 12.4, east: 24.8 });
     expect(boundsFromPins([{ lat: 10, lon: 20 }])).toEqual({ south: 9.99, west: 19.99, north: 10.01, east: 20.01 });
   });
 
@@ -71,11 +78,15 @@ describe("parsePinDocument", () => {
   it("accepts the default template and CSS", () => {
     expect(() => sanitizePinTemplate(DEFAULT_PIN_TEMPLATE)).not.toThrow();
     expect(() => sanitizePinCss(DEFAULT_PIN_CSS)).not.toThrow();
-    expect(() => sanitizePinCss('.pin { display: flex; gap: 4px; padding: 6px 9px; transform: translateY(1px); }')).not.toThrow();
+    expect(() => sanitizePinCss(
+      ".pin { display: flex; gap: 4px; padding: 6px 9px; } .pin-label { transform: translateY(1px); }",
+    )).not.toThrow();
   });
 
   it("escapes template values and rejects active or remote content", () => {
     expect(escapeHtml('<x>&')).toBe("&lt;x&gt;&amp;");
+    expect(renderPinTemplate("<div>{{label}}</div>", { label: "<script>" }))
+      .toBe("<div>&lt;script&gt;</div>");
     expect(() => sanitizePinTemplate('<img src="https://example.test/x">')).toThrow();
     expect(() => sanitizePinCss('@import url(https://example.test/x);')).toThrow();
   });
