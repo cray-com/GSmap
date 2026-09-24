@@ -67,6 +67,8 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   buildingsColorRef.current = buildingsColor;
   const backgroundColorRef = useRef(backgroundColor);
   backgroundColorRef.current = backgroundColor;
+  const pinsRef = useRef(pins);
+  pinsRef.current = pins;
 
   const selectingRef = useRef(false);
   const startPxRef = useRef<{ x: number; y: number } | null>(null);
@@ -216,8 +218,8 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     originalBackgroundColors.delete(map);
     // Paint expressions differ per style; drop the resolver cache.
     clearStyleResolveCache();
-    map.setStyle(def.styleUrl);
-    return whenStyleLoaded(map, () => {
+    const restoreOverlays = () => {
+      map.off("idle", restoreOverlays);
       if (!mapRef.current) return;
       redrawStoredBbox(mapRef.current);
       applyLabelVisibility(mapRef.current, hideLabelsRef.current);
@@ -225,8 +227,13 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       applyRoadsColor(mapRef.current, roadsColorRef.current);
       applyBuildingsColor(mapRef.current, buildingsColorRef.current);
       applyBackgroundColor(mapRef.current, backgroundColorRef.current);
-      syncPins(mapRef.current, pins);
-    });
+      syncPins(mapRef.current, pinsRef.current);
+    };
+    map.on("idle", restoreOverlays);
+    map.setStyle(def.styleUrl);
+    return () => {
+      map.off("idle", restoreOverlays);
+    };
   }, [styleId]);
 
   useEffect(() => {
@@ -370,18 +377,23 @@ const PINS_CIRCLE = "user-pins-circle";
 const PINS_LABELS = "user-pins-labels";
 
 function whenStyleLoaded(map: MlMap, callback: () => void): () => void {
+  if ((map.getStyle()?.layers?.length ?? 0) > 0) {
+    callback();
+    return () => undefined;
+  }
+
   const apply = () => {
-    if (!map.isStyleLoaded()) return;
-    map.off("styledata", apply);
+    map.off("style.load", apply);
     callback();
   };
-  if (map.isStyleLoaded()) apply();
-  else map.on("styledata", apply);
-  return () => map.off("styledata", apply);
+  map.on("style.load", apply);
+  return () => {
+    map.off("style.load", apply);
+  };
 }
 
 function syncPins(map: MlMap, pins: Pin[]) {
-  if (!map.isStyleLoaded()) return;
+  if ((map.getStyle()?.layers?.length ?? 0) === 0) return;
 
   const data: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -431,7 +443,7 @@ function syncPins(map: MlMap, pins: Pin[]) {
       });
     }
   } catch {
-    // Style lifecycle events will retry once the style structure is ready.
+    // A simultaneous style replacement owns the next synchronization.
   }
 }
 
@@ -1071,6 +1083,7 @@ function captureSelectedPng(
       const ctx = out.getContext("2d");
       if (!ctx) return Promise.reject(new Error("Canvas export is not available"));
       ctx.drawImage(sourceCanvas, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+      drawPngAttribution(ctx, srcW, srcH, ratio);
 
       restoreRenderState();
 
@@ -1098,6 +1111,40 @@ function captureSelectedPng(
       throw err;
     });
   });
+}
+
+function drawPngAttribution(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  pixelRatio: number,
+) {
+  const text = "© OpenStreetMap contributors · openstreetmap.org/copyright · OpenFreeMap / OpenMapTiles";
+  const padding = Math.max(4, Math.round(4 * pixelRatio));
+  let fontSize = Math.max(8, Math.round(10 * pixelRatio));
+
+  ctx.save();
+  ctx.font = `500 ${fontSize}px sans-serif`;
+  const maxTextWidth = Math.max(1, width - padding * 2);
+  const measured = ctx.measureText(text).width;
+  if (measured > maxTextWidth) {
+    fontSize = Math.max(6, Math.floor(fontSize * (maxTextWidth / measured)));
+    ctx.font = `500 ${fontSize}px sans-serif`;
+  }
+
+  const textWidth = Math.min(ctx.measureText(text).width, maxTextWidth);
+  const boxHeight = fontSize + padding * 2;
+  const boxWidth = textWidth + padding * 2;
+  const x = width - boxWidth;
+  const y = height - boxHeight;
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+  ctx.fillRect(x, y, boxWidth, boxHeight);
+  ctx.fillStyle = "rgba(20, 20, 24, 0.9)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + padding, y + boxHeight / 2, maxTextWidth);
+  ctx.restore();
 }
 
 /**

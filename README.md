@@ -72,6 +72,7 @@ yarn preview
    without `bounds` keeps the current camera and selection.
 6. Click **Local SVG** to download the vector export, or **Export PNG** for a
    raster image. Pins are intentionally not included in the SVG export yet.
+   PNG exports include the required OpenStreetMap and basemap attribution.
 7. Open the SVG in your vector editor of choice. Each map-style layer is a
    separate `<g>` so you can edit them independently.
 
