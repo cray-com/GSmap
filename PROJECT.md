@@ -46,6 +46,14 @@ Schrift- und Theme-Anpassungen gehören zu Ausbaustufe 2. Der bestehende SVG-Exp
 
 `bounds`, `id` und `label` sind optional. `pins` ist erforderlich. Koordinaten werden als WGS84-Breitengrad und Längengrad interpretiert.
 
+## Pin-Import und Templates
+
+Der Import läuft vollständig im Browser. Unterstützt werden der dokumentierte `{pins:[{lat,lon,...}], bounds?}`-Vertrag, GeoJSON-`FeatureCollection` mit Point-Features (`coordinates` ist `[lon,lat]`) und Top-Level-Arrays mit case-insensitive `latitude/longitude`, `lat/lon` oder `lat/lng`. Der erkannte Adapter und die Koordinatenfelder werden angezeigt; Original-Eigenschaften bleiben erhalten. Beschriftungen werden deterministisch aus `label`, `name`, `title`, `project`, `location_name`, `id` gewählt.
+
+Identische Koordinaten werden zu einem Pin aggregiert. Die Größe skaliert mit `sqrt(duplicateCount)` und ist begrenzt; `duplicateCount` und `duplicateScale` stehen im Template zur Verfügung. Es gibt keine räumliche Verschiebung und kein erforderliches Badge.
+
+HTML- und CSS-Pinvorlagen werden als sicherer, absichtlich kleiner Subset behandelt: `div`, `span`, Text und wenige typografische/Box-Eigenschaften. Platzhalter sind `{{field}}` und werden HTML-escaped. JavaScript, Event-Handler, iframe/object/embed, externe URLs, `url()` und `@import` werden abgelehnt. Die Vorlage wird zu einem hochauflösenden MapLibre-Rasterbild gerendert, dadurch sind Vorschau, Map-Style-Wechsel und PNG identisch; SVG bleibt pinfrei. Uploads akzeptieren `.json`, `.geojson`, `.html` und `.css`.
+
 ## Später
 
 - Kartenschriften und Pin-Typografie ersetzen.

@@ -35,7 +35,8 @@ import { StyleSelect } from "./StyleSelect";
 import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
 import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
 import type { BBox } from "./types";
-import { parsePinDocument, type Pin } from "./pins";
+import { parsePinInput, type Pin, type PinMetadata } from "./pins";
+import { DEFAULT_PIN_CSS, DEFAULT_PIN_TEMPLATE, sanitizePinCss, sanitizePinTemplate } from "./pinTemplate";
 
 type UiTheme = "light" | "dark";
 
@@ -80,6 +81,9 @@ export function App() {
   const [statusError, setStatusError] = useState(false);
   const [pinJson, setPinJson] = useState("");
   const [pins, setPins] = useState<Pin[]>([]);
+  const [pinMetadata, setPinMetadata] = useState<PinMetadata | null>(null);
+  const [pinTemplate, setPinTemplate] = useState(DEFAULT_PIN_TEMPLATE);
+  const [pinCss, setPinCss] = useState(DEFAULT_PIN_CSS);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -194,25 +198,39 @@ export function App() {
     setRecents(clearRecents());
   }
 
+  function loadPinText(text: string) {
+    try {
+      const document = parsePinInput(text);
+      setPins(document.pins); setPinMetadata(document.metadata); setPinJson(text);
+      setStatusMsg(null); setStatusError(false);
+      if (document.bounds) { mapRef.current?.fitBbox(document.bounds); setBbox(document.bounds); }
+    } catch (err) { setStatusMsg(err instanceof Error ? err.message : String(err)); setStatusError(true); }
+  }
+
   function handleLoadPins(e: React.FormEvent) {
     e.preventDefault();
-    try {
-      const document = parsePinDocument(pinJson);
-      setPins(document.pins);
-      setStatusMsg(null);
-      setStatusError(false);
-      if (document.bounds) {
-        mapRef.current?.fitBbox(document.bounds);
-        setBbox(document.bounds);
-      }
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-      setStatusError(true);
-    }
+    loadPinText(pinJson);
+  }
+
+  async function handlePinFile(file: File) {
+    if (!/\\.(json|geojson)$/i.test(file.name)) { setStatusMsg("Please choose a .json or .geojson file."); setStatusError(true); return; }
+    loadPinText(await file.text());
+  }
+
+  async function handleTemplateFile(file: File, kind: "html" | "css") {
+    if (!file.name.toLowerCase().endsWith(`.${kind}`)) { setStatusMsg(`Please choose a .${kind} file.`); setStatusError(true); return; }
+    const text = await file.text();
+    try { if (kind === "html") { sanitizePinTemplate(text); setPinTemplate(text); } else { sanitizePinCss(text); setPinCss(text); } } catch (err) { setStatusMsg(err instanceof Error ? err.message : String(err)); setStatusError(true); }
+  }
+
+  function handlePinDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0]; if (file) void handlePinFile(file);
   }
 
   function handleClearPins() {
     setPins([]);
+    setPinMetadata(null);
     setPinJson("");
     setStatusMsg(null);
     setStatusError(false);
@@ -435,7 +453,8 @@ export function App() {
                 <PanelSection title={t.pins.sectionTitle} icon={MapPinned}>
                   <form className="stack-sm" onSubmit={handleLoadPins}>
                     <label className="field-label" htmlFor="pin-json">{t.pins.jsonLabel}</label>
-                    <textarea
+                    <div className="pin-dropzone" onDragOver={(e) => e.preventDefault()} onDrop={handlePinDrop}>
+                      <textarea
                       id="pin-json"
                       className="input pin-json-input"
                       value={pinJson}
@@ -443,12 +462,28 @@ export function App() {
                       placeholder={t.pins.placeholder}
                       spellCheck={false}
                     />
+                    </div>
+                    <div className="pin-file-row">
+                      <label className="mini-action" htmlFor="pin-file">Choose .json/.geojson</label>
+                      <input id="pin-file" type="file" accept=".json,.geojson,application/json,application/geo+json" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void handlePinFile(file); }} />
+                      {pinMetadata && <span className="pin-meta">{pinMetadata.format} · {pinMetadata.coordinateFields}</span>}
+                    </div>
                     <div className="pin-actions">
                       <button className="btn field-action-button" type="submit">{t.pins.load}</button>
                       <button className="mini-action" type="button" onClick={handleClearPins}>{t.pins.clear}</button>
                       <span className="pin-count">{t.pins.count(pins.length)}</span>
                     </div>
                   </form>
+                </PanelSection>
+
+                <PanelSection title={t.pins.customTitle} icon={Palette}>
+                  <label className="field-label" htmlFor="pin-template">{t.pins.templateLabel}</label>
+                  <textarea id="pin-template" className="input pin-code-input" value={pinTemplate} onChange={(e) => { try { sanitizePinTemplate(e.target.value); setPinTemplate(e.target.value); } catch (err) { setStatusMsg(err instanceof Error ? err.message : String(err)); setStatusError(true); } }} spellCheck={false} />
+                  <label className="mini-action" htmlFor="pin-html-file">{t.pins.chooseHtml}</label><input id="pin-html-file" type="file" accept=".html,text/html" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleTemplateFile(file, "html"); }} />
+                  <label className="field-label" htmlFor="pin-css">{t.pins.cssLabel}</label>
+                  <textarea id="pin-css" className="input pin-code-input" value={pinCss} onChange={(e) => { try { sanitizePinCss(e.target.value); setPinCss(e.target.value); } catch (err) { setStatusMsg(err instanceof Error ? err.message : String(err)); setStatusError(true); } }} spellCheck={false} />
+                  <label className="mini-action" htmlFor="pin-css-file">{t.pins.chooseCss}</label><input id="pin-css-file" type="file" accept=".css,text/css" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleTemplateFile(file, "css"); }} />
+                  <div className="pin-actions"><button className="mini-action" type="button" onClick={() => { setPinTemplate(DEFAULT_PIN_TEMPLATE); setPinCss(DEFAULT_PIN_CSS); }}>{t.pins.resetTemplate}</button><span className="pin-meta">{"{{field}}"} · duplicateCount · duplicateScale</span></div>
                 </PanelSection>
 
                 <PanelSection
@@ -756,6 +791,8 @@ export function App() {
           onSelect={setBbox}
           onAcceptSelection={handleAcceptSelection}
           pins={pins}
+          pinTemplate={pinTemplate}
+          pinCss={pinCss}
         />
       )}
       <AnimatePresence mode="wait">

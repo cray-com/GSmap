@@ -56,24 +56,10 @@ yarn preview
    undo your adjustments). Clicking an accepted selection re-opens editing.
 4. Pick a map style; optionally override the roads, buildings, and background
    colors. Toggle labels or buildings off if you want a cleaner export.
-5. To add points, paste a JSON object into **JSON data** and click **Load**.
-   The required `pins` array contains `lat` and `lon`; each pin may also have an
-   `id` and `label`. An optional `bounds` object (`south`, `west`, `north`,
-   `east`) sets the selection and map view when loaded:
-
-   ```json
-   {
-     "bounds": { "south": 48.18, "west": 16.31, "north": 48.24, "east": 16.43 },
-     "pins": [{ "id": "kunde-1", "lat": 48.2082, "lon": 16.3738, "label": "Standort Wien" }]
-   }
-   ```
-
-   Pins and optional labels appear in the preview and PNG export. Loading JSON
-   without `bounds` keeps the current camera and selection.
-6. Click **Local SVG** to download the vector export, or **Export PNG** for a
-   raster image. Pins are intentionally not included in the SVG export yet.
-   PNG exports include the required OpenStreetMap and basemap attribution.
-7. Open the SVG in your vector editor of choice. Each map-style layer is a
+5. To add points, paste JSON or drop/upload `.json`/`.geojson` in **Pins**. Supported roots are the documented `{pins:[{lat,lon,...}], bounds?}`, GeoJSON `FeatureCollection` Point features (`[lon,lat]`), and top-level record arrays with case-insensitive `latitude/longitude`, `lat/lon`, or `lat/lng`. The detected format and coordinate fields are shown. Labels are selected as `label`, `name`, `title`, `project`, `location_name`, `id`; original properties are preserved. Loading JSON without `bounds` keeps the current camera and selection.
+6. Identical coordinates render as one pin, scaled by `sqrt(duplicateCount)` with a cap. The custom template receives `duplicateCount` and `duplicateScale`; duplicates are not spread and no badge is required. In **Custom pin**, paste or upload `.html` and `.css`. The constrained subset supports `{{field}}` (HTML-escaped); JavaScript, event handlers, iframe/object/embed, remote URLs, `url()` and `@import` are rejected. Sanitized HTML/CSS is rasterized into a high-resolution MapLibre icon, so live map, PNG export and style switches match. Reset restores the default. Custom pins are intentionally excluded from SVG.
+7. Click **Local SVG** to download the vector export, or **Export PNG** for a raster image. PNG exports include the required OpenStreetMap and basemap attribution.
+8. Open the SVG in your vector editor of choice. Each map-style layer is a
    separate `<g>` so you can edit them independently.
 
 ## SVG structure
