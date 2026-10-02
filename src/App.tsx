@@ -109,6 +109,7 @@ export function App() {
   const [pngScale, setPngScale] = useState<1 | 2 | 3 | 4>(1);
   const [pngPreset, setPngPreset] = useState<"scale" | "custom" | "a4" | "a3">("scale");
   const [printLandscape, setPrintLandscape] = useState(false);
+  const [, refreshExportSize] = useState(0);
   const [pngWidth, setPngWidth] = useState("2400");
   const [pngHeight, setPngHeight] = useState("1600");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -130,6 +131,12 @@ export function App() {
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    const resize = () => refreshExportSize((revision) => revision + 1);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, []);
 
   useEffect(() => {
@@ -315,12 +322,14 @@ export function App() {
   }
 
   function handleCreatePoint(point: { lat: number; lon: number }) {
-    const label = newPointLabel.trim() || t.pins.newPoint(pins.length + 1);
+    const label = newPointLabel.trim();
     const id = `manual-${crypto.getRandomValues(new Uint32Array(4)).join("-")}`;
     const pin = createManualPin(point, label, id, pinStyle.labelField);
     setPins((current) => [...current, pin]);
     setManualPointIds((current) => [...current, id]);
-    if (!pinStyle.labelField) setPinStyle((current) => ({ ...current, labelField: "label" }));
+    if (pins.length === 0 && !pinStyle.labelField) {
+      setPinStyle((current) => ({ ...current, labelField: "label" }));
+    }
     setStatusMsg(null);
     setStatusError(false);
   }
@@ -421,9 +430,16 @@ export function App() {
   }
 
   const pngOptions = getPngOptions();
-  const pngSize = typeof pngOptions === "number"
-    ? bbox ? mapRef.current?.getPngSize(bbox, pngOptions) : undefined
-    : pngOptions;
+  const pngSize = (() => {
+    try {
+      return typeof pngOptions === "number"
+        ? bbox ? mapRef.current?.getPngSize(bbox, pngOptions) : undefined
+        : pngOptions;
+    } catch {
+      // Unsupported selections/sizes are reported by the export action, not a render crash.
+      return undefined;
+    }
+  })();
 
   async function handleExportPng() {
     const map = mapRef.current;
@@ -609,7 +625,7 @@ export function App() {
 
                 <PanelSection title={t.pins.createTitle} icon={MapPinned}>
                   <label className="field-group" htmlFor="new-point-label">
-                    <span className="field-label">{t.pins.nextLabel}</span>
+                    <span className="field-label">{t.pins.nextLabel}{pinStyle.labelField ? ` · ${pinStyle.labelField}` : ""}</span>
                     <input id="new-point-label" className="input" value={newPointLabel} onChange={(e) => setNewPointLabel(e.target.value)} placeholder={t.pins.optionalLabel} maxLength={200} />
                   </label>
                   <div className="pin-actions pin-create-actions">
@@ -947,8 +963,8 @@ export function App() {
                   </select>
                 </label>}
                 {pngPreset === "custom" && <div className="pin-control-grid">
-                  <label className="field-group" htmlFor="png-width"><span className="field-label">{t.export.widthPx}</span><input id="png-width" className="input" type="number" min={1} step={1} value={pngWidth} onChange={(e) => setPngWidth(e.target.value)} disabled={exporting} /></label>
-                  <label className="field-group" htmlFor="png-height"><span className="field-label">{t.export.heightPx}</span><input id="png-height" className="input" type="number" min={1} step={1} value={pngHeight} onChange={(e) => setPngHeight(e.target.value)} disabled={exporting} /></label>
+                  <label className="field-group" htmlFor="png-width"><span className="field-label">{t.export.widthPx}</span><input id="png-width" className="input" type="number" min={256} step={1} value={pngWidth} onChange={(e) => setPngWidth(e.target.value)} disabled={exporting} /></label>
+                  <label className="field-group" htmlFor="png-height"><span className="field-label">{t.export.heightPx}</span><input id="png-height" className="input" type="number" min={64} step={1} value={pngHeight} onChange={(e) => setPngHeight(e.target.value)} disabled={exporting} /></label>
                 </div>}
                 {(pngPreset === "a4" || pngPreset === "a3") && <label className="field-group">
                   <span className="field-label">{t.export.orientation}</span>

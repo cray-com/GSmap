@@ -5,13 +5,14 @@
   "type": "module",
   "packageManager": "yarn@1.22.22",
   "license": "MIT",
-  "description": "Open source map area selector that exports real, editable vector SVG. Built on OpenStreetMap.",
+  "description": "Client-side map publishing with JSON/GeoJSON points, styled labels and high-resolution PNG export.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "node scripts/check-png-browser.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-gl-style-spec": "20.4.0",

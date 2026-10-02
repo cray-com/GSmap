@@ -548,10 +548,9 @@ function syncPins(map: MlMap, pins: Pin[], options: PinStyleOptions): void {
       id: PINS_LABELS,
       type: "symbol",
       source: PINS_SOURCE,
-      filter: options.labels
-        ? ["!", ["==", ["get", "label"], ""]]
-        : ["==", "label", "__never__"],
+      filter: ["!=", ["get", "label"], ""],
       layout: {
+        visibility: options.labels ? "visible" : "none",
         "text-field": ["get", "label"],
         "text-size": options.fontSize,
         "text-anchor": anchors[options.labelPosition],
@@ -1241,13 +1240,15 @@ async function captureSelectedPng(map: MlMap, bbox: BBox, options: PngExportOpti
   const size = typeof options === "number" ? getPngSize(bbox, mapViewport(map), options) : validatePngSize(options);
   const dpi = typeof options === "number" ? undefined : options.dpi;
   if (dpi !== undefined) validateDpi(dpi);
-  const layout = pngLayout(bbox, size);
+  const pixelRatio = typeof options === "number" ? options : (dpi ?? 96) / 96;
+  const layout = pngLayout(bbox, size, pixelRatio);
+  const renderSize = { width: layout.renderWidth, height: layout.renderHeight };
   // Query before any large allocations; MapLibre's default 4096 ceiling is not sufficient for A3.
   const gl = canvasGl(map.getCanvas());
   const viewportLimit = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array;
   const limit = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
   const maxCanvasSize: [number, number] = [Math.min(limit, viewportLimit[0]), Math.min(limit, viewportLimit[1])];
-  if (layout.width > maxCanvasSize[0] || layout.height > maxCanvasSize[1]) {
+  if (renderSize.width > maxCanvasSize[0] || renderSize.height > maxCanvasSize[1]) {
     throw new Error(`PNG map size exceeds this browser's WebGL limit (${maxCanvasSize.join(" × ")}). Choose a smaller size.`);
   }
   // getStyle serializes current GeoJSON data and every native paint/layout override.
@@ -1270,14 +1271,14 @@ async function captureSelectedPng(map: MlMap, bbox: BBox, options: PngExportOpti
     exportMap = new maplibregl.Map({
       container, style, center: layout.center, zoom: layout.zoom, bearing: 0, pitch: 0,
       minZoom: -2, maxZoom: 24, interactive: false, attributionControl: false,
-      preserveDrawingBuffer: true, pixelRatio: 1, maxCanvasSize, fadeDuration: 0,
+      preserveDrawingBuffer: true, pixelRatio, maxCanvasSize, fadeDuration: 0,
       renderWorldCopies: true,
     });
     exportMap.on("error", resourceFailed);
     exportMap.on("webglcontextlost", contextLost);
-    checkExportBuffer(exportMap, layout);
+    checkExportBuffer(exportMap, renderSize);
     await waitForExportRender(exportMap, deadline);
-    checkExportBuffer(exportMap, layout);
+    checkExportBuffer(exportMap, renderSize);
     // Guard camera constraints as well as buffer clamps: never silently crop a selection.
     const sw = exportMap.project([bbox.west, bbox.south]);
     const ne = exportMap.project([bbox.east, bbox.north]);
@@ -1299,7 +1300,7 @@ async function captureSelectedPng(map: MlMap, bbox: BBox, options: PngExportOpti
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, size.width, size.height);
     ctx.drawImage(exportMap.getCanvas(), layout.x, layout.y); // 1:1, no bitmap upscaling or stretching
-    drawPngAttribution(ctx, size.width, size.height, typeof options === "number" ? options : (dpi ?? 96) / 96);
+    drawPngAttribution(ctx, size.width, size.height, pixelRatio);
     let blob = await beforeDeadline(new Promise<Blob>((resolve, reject) => {
       out!.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encoding failed. Choose a smaller size.")), "image/png");
     }), deadline, "encoding");
@@ -1316,7 +1317,7 @@ async function captureSelectedPng(map: MlMap, bbox: BBox, options: PngExportOpti
       }
     } finally { image.src = ""; URL.revokeObjectURL(url); }
     if (failure) throw failure;
-    checkExportBuffer(exportMap, layout);
+    checkExportBuffer(exportMap, renderSize);
     return blob;
   } finally {
     try {

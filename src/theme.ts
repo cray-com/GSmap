@@ -126,7 +126,7 @@ MAP_STYLES.push(
     styleUrl: MAP_STYLES[0].styleUrl, attribution: OFM_ATTRIBUTION,
     tokens: {
       primary: "#303030", secondary: "#aaaaaa", background: "#ffffff",
-      water: "#d7d7d7", roads: "#fafafa", parks: "#e8e8e8",
+      water: "#d7d7d7", roads: "#888888", parks: "#e8e8e8",
       buildings: "#bcbcbc", labels: "#252525",
     },
   },

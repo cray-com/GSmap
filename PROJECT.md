@@ -60,6 +60,14 @@ Identische Koordinaten werden zu einem Punkt aggregiert, ohne räumliche Verschi
 
 Monochrome, Warm Paper und Blueprint verwenden Positrons vorhandene Geometrie, Zoomregeln und Schriften mit lokalen Farbpaletten. Es werden keine weiteren Anbieter, API-Schlüssel oder Lizenzen benötigt. Nutzerfarben und Sichtbarkeitsschalter gelten weiterhin.
 
+## Prüfstand, 2. Oktober 2026
+
+- Typecheck, 22 Tests und Produktionsbuild bestanden. Die bestehende Warnung zur Bundle-Größe bleibt.
+- Beide aktuellen Kundendateien mit dem tatsächlichen Parser geprüft: 40 Datensätze, 31 Positionen, gleiche IDs, Koordinaten, Labels und `source_ids`.
+- In einer isolierten Chromium-Testseite JSON-Import mit 40 Punkten, Klick-Erstellung, Rückgängig und Escape geprüft. Das ist kein vollständiger Karten-/PNG-Test.
+- Der native automatisierte Browsercheck hängt bereits bei `Page.navigate`. Auch in der isolierten Testseite wurden die Karten-Worker nicht fertig. Ursache nicht abschließend geklärt; daraus folgt keine Aussage über die Grafiklimits auf Nutzergeräten.
+- Reale PNG-Dateien aus der neuen Exportimplementierung wurden hier noch nicht erfolgreich erzeugt und vermessen. Vor einer stabilen Veröffentlichung 1x–4x, A4/A3, Theme-Wechsel, sichtbare Labels und Kamerazustand in einem funktionierenden Browser prüfen. Dafür liegt `scripts/check-png-browser.mjs` bereit.
+
 ## Später
 
 - Kartenschriften und Pin-Typografie ersetzen.

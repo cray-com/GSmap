@@ -199,7 +199,8 @@ export function LicensePage({ onBack, uiTheme, onToggleTheme, embedded = false }
               <h3>OpenFreeMap themes</h3>
               <p>
                 These are the visual map styles used for the preview, including themes
-                like Positron and Liberty.
+                like Positron and Liberty. Monochrome, Warm Paper and Blueprint are local
+                Positron palette variants and use the same data and attribution.
               </p>
               <p>
                 <strong>License:</strong> the OpenFreeMap styles project is MIT. The

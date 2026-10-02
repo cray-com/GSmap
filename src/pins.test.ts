@@ -66,6 +66,9 @@ describe("parsePinDocument", () => {
     const parsed = parsePinInput(JSON.stringify({ type: "FeatureCollection", features: [{ type: "Feature", properties: { title: "X" }, geometry: { type: "Point", coordinates: [2, 1] } }] }));
     expect(parsed.metadata.format).toBe("GeoJSON FeatureCollection");
     expect(parsed.pins[0]).toMatchObject({ lat: 1, lon: 2, label: "X" });
+    const collection = { type: "FeatureCollection", features: [{ type: "Feature", id: 0, properties: { id: "Label ID" }, geometry: { type: "Point", coordinates: [2, 1] } }] };
+    expect(parsePinInput(JSON.stringify(collection)).pins[0]).toMatchObject({ id: "0", properties: { id: "Label ID" } });
+    expect(() => parsePinInput(JSON.stringify({ ...collection, features: [{ ...collection.features[0], id: {} }] }))).toThrow("id must be a string or finite number");
   });
 
   it("computes padded bounds for imported pins", () => {
@@ -95,7 +98,18 @@ describe("parsePinDocument", () => {
     const pins = [...imported, manual];
     expect(displayPinLabel(aggregatePins([manual])[0], "name")).toBe("Added");
     expect(parsePinInput(JSON.stringify(pinsToGeoJson(pins))).pins).toMatchObject(pins);
-    expect(createManualPin({ lat: 0, lon: 0 }, "Label", "manual-2", "ID").id).toBe("manual-2");
+    const idLabel = createManualPin({ lat: 0, lon: 0 }, "Label", "manual-2", "ID");
+    expect(idLabel.id).toBe("manual-2");
+    expect(displayPinLabel(aggregatePins([idLabel])[0], "ID")).toBe("Label");
+    const lowerIdLabel = createManualPin({ lat: 0, lon: 1 }, "Label", "manual-5", "id");
+    const reimported = parsePinInput(JSON.stringify(pinsToGeoJson([idLabel, lowerIdLabel]))).pins;
+    expect(reimported.map((pin) => pin.id)).toEqual(["manual-2", "manual-5"]);
+    expect(displayPinLabel(aggregatePins([reimported[1]])[0], "id")).toBe("Label");
+    const unlabeled = createManualPin({ lat: 0, lon: 0 }, "", "manual-3");
+    expect(displayPinLabel(aggregatePins([unlabeled])[0], "label")).toBeUndefined();
+    const unusualField = createManualPin({ lat: 0, lon: 0 }, "Safe", "manual-4", "__proto__");
+    expect(displayPinLabel(aggregatePins([unusualField])[0], "__proto__")).toBe("Safe");
+    expect(Object.getPrototypeOf(unusualField.properties)).toBe(Object.prototype);
     expect(() => createManualPin({ lat: NaN, lon: 0 }, "X", "x")).toThrow("finite number");
     expect(() => createManualPin({ lat: 91, lon: 0 }, "X", "x")).toThrow("between -90 and 90");
   });

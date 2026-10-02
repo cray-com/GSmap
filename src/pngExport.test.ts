@@ -23,10 +23,13 @@ describe("PNG sizing", () => {
     const four = getPngSize(bbox, viewport, 4);
     expect(one.width).toBe(820);
     expect(one.height).toBeLessThanOrEqual(620);
-    expect(Math.abs(four.width - one.width * 4)).toBeLessThanOrEqual(2);
-    expect(Math.abs(four.height - one.height * 4)).toBeLessThanOrEqual(2);
+    expect(four).toEqual({ width: one.width * 4, height: one.height * 4 });
+    for (const scale of [2, 3] as const) {
+      expect(getPngSize(bbox, viewport, scale)).toEqual({ width: one.width * scale, height: one.height * scale });
+    }
     expect(one.width / one.height).toBeCloseTo(pngSelection(bbox).aspect, 2);
-    expect(pngLayout(bbox, four).zoom - pngLayout(bbox, one).zoom).toBeCloseTo(2, 2);
+    // Native pixel density preserves map styling rather than shrinking labels at 4x.
+    expect(pngLayout(bbox, four, 4).zoom).toBeCloseTo(pngLayout(bbox, one).zoom, 10);
   });
 
   it("centers matching-aspect map pixels on exact A4/A3 pages without stretching", () => {
@@ -43,6 +46,21 @@ describe("PNG sizing", () => {
     const tall = pngLayout({ west: 0, east: 0.01, south: 0, north: 1 }, { width: 1000, height: 500 });
     expect(tall.x).toBeGreaterThan(0);
     expect(tall.height).toBe(500);
+  });
+
+  it("keeps native styles at 300 DPI and accounts for the real drawing-buffer size", () => {
+    for (const size of Object.values(PRINT_SIZES)) {
+      const layout = pngLayout(bbox, size, 300 / 96);
+      expect(layout.renderWidth).toBe(Math.floor(layout.width * 300 / 96));
+      expect(layout.renderHeight).toBe(Math.floor(layout.height * 300 / 96));
+      expect(layout.renderWidth).toBeLessThanOrEqual(size.width);
+      expect(layout.renderHeight).toBeLessThanOrEqual(size.height);
+      expect(Math.abs(layout.x * 2 + layout.renderWidth - size.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(layout.y * 2 + layout.renderHeight - size.height)).toBeLessThanOrEqual(1);
+    }
+    expect(() => pngLayout(bbox, { width: 256, height: 64 }, 100)).toThrow("too small");
+    expect(() => validatePngSize({ width: 255, height: 64 })).toThrow("attribution");
+    expect(() => validatePngSize({ width: 256, height: 63 })).toThrow("attribution");
   });
 
   it("uses Mercator latitude spacing, including wrapped longitude selections", () => {

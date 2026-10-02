@@ -13,6 +13,9 @@ export function validatePngSize(size: PngSize): PngSize {
   if (![size.width, size.height].every((n) => Number.isSafeInteger(n) && n > 0)) {
     throw new Error("PNG width and height must be positive whole pixels.");
   }
+  if (size.width < 256 || size.height < 64) {
+    throw new Error("PNG must be at least 256 × 64 pixels to include readable attribution.");
+  }
   if (size.width * size.height > MAX_PNG_PIXELS) {
     throw new Error("PNG is too large (maximum 32 million pixels). Choose a smaller size.");
   }
@@ -48,19 +51,27 @@ export function getPngSize(bbox: BBox, viewport: PngSize, scale: 1 | 2 | 3 | 4):
   }
   const { dx, dy } = pngSelection(bbox);
   const factor = Math.min((viewport.width - 80) / dx, (viewport.height - 80) / dy);
-  return validatePngSize({ width: Math.max(1, Math.round(dx * factor * scale)), height: Math.max(1, Math.round(dy * factor * scale)) });
+  return validatePngSize({ width: Math.max(1, Math.round(dx * factor)) * scale, height: Math.max(1, Math.round(dy * factor)) * scale });
 }
 
-/** Matching-aspect map pixels are centered, never stretched to fill a print page. */
-export function pngLayout(bbox: BBox, size: PngSize) {
+/** Render at native density; center the resulting pixels without stretching a print page. */
+export function pngLayout(bbox: BBox, size: PngSize, pixelRatio = 1) {
   validatePngSize(size);
+  if (!Number.isFinite(pixelRatio) || pixelRatio <= 0 || size.width < pixelRatio || size.height < pixelRatio) {
+    throw new Error("PNG size is too small for the requested pixel density.");
+  }
   const selection = pngSelection(bbox);
-  const factor = Math.min(size.width / selection.dx, size.height / selection.dy);
+  const factor = Math.min(Math.floor(size.width / pixelRatio) / selection.dx, Math.floor(size.height / pixelRatio) / selection.dy);
   const width = Math.max(1, Math.floor(selection.dx * factor + 1e-7));
   const height = Math.max(1, Math.floor(selection.dy * factor + 1e-7));
   const zoom = Math.log2(Math.min(width / selection.dx, height / selection.dy) / 512);
   if (zoom < -2 || zoom > 24) throw new Error("Selection cannot be rendered at this size within MapLibre's zoom limits. Change the size or selection.");
-  return { width, height, x: Math.floor((size.width - width) / 2), y: Math.floor((size.height - height) / 2), center: selection.center, zoom };
+  const renderWidth = Math.floor(width * pixelRatio);
+  const renderHeight = Math.floor(height * pixelRatio);
+  return { width, height, renderWidth, renderHeight,
+    x: Math.floor((size.width - renderWidth) / 2), y: Math.floor((size.height - renderHeight) / 2),
+    center: selection.center, zoom };
+
 }
 
 export function validateDpi(dpi: number): number {

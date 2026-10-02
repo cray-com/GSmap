@@ -139,7 +139,12 @@ export function parsePinInput(input: string): ParsedPinDocument {
       const coordinates = feature.geometry.coordinates;
       const properties = isRecord(feature.properties) ? { ...feature.properties } : {};
       if (feature.id !== undefined && properties.id === undefined) properties.id = feature.id;
-      return makePin(properties, numberField(coordinates[1], `features[${index}].geometry.coordinates[1]`), numberField(coordinates[0], `features[${index}].geometry.coordinates[0]`), `features[${index}]`);
+      const pin = makePin(properties, numberField(coordinates[1], `features[${index}].geometry.coordinates[1]`), numberField(coordinates[0], `features[${index}].geometry.coordinates[0]`), `features[${index}]`);
+      if (feature.id === undefined) return pin;
+      if (typeof feature.id !== "string" && !(typeof feature.id === "number" && Number.isFinite(feature.id))) {
+        throw new Error(`features[${index}].id must be a string or finite number.`);
+      }
+      return { ...pin, id: String(feature.id) };
     });
     return { pins, metadata: { format: "GeoJSON FeatureCollection", coordinateFields: "coordinates[lon, lat]", labelField: findLabelField(pins), labelFields: getLabelFields(pins) } };
   }
@@ -166,9 +171,10 @@ export function parsePinDocument(input: string): PinDocument {
 
 /** Manual additions use the same coordinate checks and selected label field as imports. */
 export function createManualPin(point: { lat: number; lon: number }, label: string, id: string, labelField = "label"): Pin {
-  const properties: Record<string, unknown> = { id, label };
-  if (labelField.toLowerCase() !== "id") properties[labelField] = label;
-  return makePin(properties, numberField(point.lat, "point.lat"), numberField(point.lon, "point.lon"), "point");
+  const properties: Record<string, unknown> = {
+    id, label, [labelField]: label,
+  };
+  return { ...makePin(properties, numberField(point.lat, "point.lat"), numberField(point.lon, "point.lon"), "point"), id };
 }
 
 /** GeoJSON keeps mixed import formats and manually added points round-trippable. */

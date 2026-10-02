@@ -78,7 +78,6 @@ const ptBR = {
     createHint: "Clique no mapa para adicionar um ponto. Esc encerra o modo.",
     createDescription: "Ative o modo para adicionar pontos sem alterar os dados importados.",
     savePoints: "Salvar pontos como GeoJSON",
-    newPoint: (count: number) => `Ponto ${count}`,
   },
   selection: {
     sectionTitle: "Seleção",
@@ -232,7 +231,6 @@ const enUS = {
     createHint: "Click the map to add a point. Esc exits this mode.",
     createDescription: "Enable this mode to add points without replacing imported data.",
     savePoints: "Save points as GeoJSON",
-    newPoint: (count: number) => `Point ${count}`,
   },
   selection: {
     sectionTitle: "Selection",
