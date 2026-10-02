@@ -13,7 +13,7 @@ illustration tool.
 - Export a high-fidelity SVG that mirrors what you see on screen — colors,
   line widths, layer order and clipping are derived from the live map style,
   not a fixed re-styling
-- Export a PNG raster of the selection (1×/2×/3×)
+- Export a PNG raster of the selection (1×/2×/3×/4×)
 - History of your last 5 searches, coordinates and selections (stored locally)
 - 100% open source, all dependencies and data sources are commercial-use
   friendly (subject to each service's usage policy — see below)

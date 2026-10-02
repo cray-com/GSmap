@@ -101,7 +101,7 @@ export function App() {
   const [pendingSearchCoords, setPendingSearchCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [recents, setRecents] = useState<RecentLocation[]>(() => loadRecents());
   const [exporting, setExporting] = useState(false);
-  const [pngScale, setPngScale] = useState<1 | 2 | 3>(1);
+  const [pngScale, setPngScale] = useState<1 | 2 | 3 | 4>(1);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
   const [pinJson, setPinJson] = useState("");
@@ -357,7 +357,7 @@ export function App() {
     }
   }
 
-  async function handleExportPng(scale: 1 | 2 | 3) {
+  async function handleExportPng(scale: 1 | 2 | 3 | 4) {
     const map = mapRef.current;
     if (!map || !bbox) {
       setStatusMsg(t.export.selectAreaFirstPng);
@@ -837,13 +837,14 @@ export function App() {
               <select
                 className="select export-png-scale"
                 value={pngScale}
-                onChange={(e) => setPngScale(Number(e.target.value) as 1 | 2 | 3)}
+                onChange={(e) => setPngScale(Number(e.target.value) as 1 | 2 | 3 | 4)}
                 disabled={exporting || !bbox}
                 aria-label={t.export.pngAriaLabel}
               >
                 <option value={1}>1x</option>
                 <option value={2}>2x</option>
                 <option value={3}>3x</option>
+                <option value={4}>4x</option>
               </select>
             </div>
             {statusMsg && (

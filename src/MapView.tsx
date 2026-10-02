@@ -13,7 +13,7 @@ export type MapHandle = {
   acceptEdit: () => void;
   revertEdit: () => void;
   getStyledFeatureSetForBbox: (bbox: BBox) => Promise<StyledFeatureSet | null>;
-  captureSelectedPng: (bbox: BBox, scale: 1 | 2 | 3) => Promise<Blob>;
+  captureSelectedPng: (bbox: BBox, scale: 1 | 2 | 3 | 4) => Promise<Blob>;
 };
 
 type EditLabels = {
@@ -1108,7 +1108,7 @@ async function withFramedBbox<T>(
 function captureSelectedPng(
   map: MlMap,
   bbox: BBox,
-  scale: 1 | 2 | 3,
+  scale: 1 | 2 | 3 | 4,
   editor: SelectionEditor | null,
 ): Promise<Blob> {
   return withFramedBbox(map, bbox, editor, () => {
