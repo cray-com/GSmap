@@ -109,7 +109,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: def.styleUrl,
-      center: [-46.6388, -23.5489],
+      center: [16.3738, 48.2082],
       zoom: 13,
       preserveDrawingBuffer: true,
       attributionControl: { compact: true },

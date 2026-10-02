@@ -77,7 +77,7 @@ try {
     return true;
   })()`);
   await waitFor("window.__checkMap?.loaded() && !window.__checkMap.isMoving()");
-  await evaluate(`Array.from(document.querySelectorAll('.rail-item')).find(button => button.textContent.trim() === 'Points & labels' || button.textContent.trim() === 'Pontos e rótulos').click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.rail-item')).find(button => button.textContent.trim() === 'Labels').click()`);
   await waitFor("!!document.querySelector('#pin-json')");
   const document = {
     bounds: { west: 16.2, east: 16.43, south: 48, north: 48.45 },

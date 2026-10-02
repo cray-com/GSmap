@@ -118,6 +118,7 @@ export function App() {
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMetadata, setPinMetadata] = useState<PinMetadata | null>(null);
   const [pinStyle, setPinStyle] = useState<PinStyleOptions>(DEFAULT_PIN_STYLE);
+  const [labelMode, setLabelMode] = useState<"json" | "map">("json");
   const [pointCreation, setPointCreation] = useState(false);
   const [newPointLabel, setNewPointLabel] = useState("");
   const [manualPointIds, setManualPointIds] = useState<string[]>([]);
@@ -149,8 +150,8 @@ export function App() {
   }, [uiTheme]);
 
   useEffect(() => {
-    if (panelTab !== "pins" || route !== "app") setPointCreation(false);
-  }, [panelTab, route]);
+    if (panelTab !== "pins" || route !== "app" || labelMode !== "map") setPointCreation(false);
+  }, [panelTab, route, labelMode]);
 
   useEffect(() => {
     if (!pointCreation) return;
@@ -597,7 +598,20 @@ export function App() {
             </>}
 
             {panelTab === "pins" && <>
-                <PanelSection title={t.pins.sectionTitle} icon={MapPinned}>
+                <PinSelect
+                  label={t.pins.mode}
+                  value={labelMode}
+                  options={[
+                    { value: "json", label: t.pins.jsonLabel },
+                    { value: "map", label: t.pins.createTitle },
+                  ]}
+                  onChange={(value) => {
+                    setLabelMode(value === "map" ? "map" : "json");
+                    setPointCreation(value === "map");
+                  }}
+                />
+
+                {labelMode === "json" ? <PanelSection title={t.pins.sectionTitle} icon={MapPinned}>
                   <form className="stack-sm" onSubmit={handleLoadPins}>
                     <label className="field-label" htmlFor="pin-json">{t.pins.jsonLabel}</label>
                     <div className="pin-dropzone" onDragOver={(e) => e.preventDefault()} onDrop={handlePinDrop}>
@@ -621,9 +635,7 @@ export function App() {
                       <span className="pin-count">{t.pins.count(pins.length)}</span>
                     </div>
                   </form>
-                </PanelSection>
-
-                <PanelSection title={t.pins.createTitle} icon={MapPinned}>
+                </PanelSection> : <PanelSection title={t.pins.createTitle} icon={MapPinned}>
                   <label className="field-group" htmlFor="new-point-label">
                     <span className="field-label">{t.pins.nextLabel}{pinStyle.labelField ? ` · ${pinStyle.labelField}` : ""}</span>
                     <input id="new-point-label" className="input" value={newPointLabel} onChange={(e) => setNewPointLabel(e.target.value)} placeholder={t.pins.optionalLabel} maxLength={200} />
@@ -637,10 +649,12 @@ export function App() {
                     </button>
                   </div>
                   <p className="control-hint">{pointCreation ? t.pins.createHint : t.pins.createDescription}</p>
-                  <button className="mini-action" type="button" onClick={handleSavePoints} disabled={!pins.length}>
-                    <Download size={13} />{t.pins.savePoints}
-                  </button>
-                </PanelSection>
+                  <span className="pin-count">{t.pins.count(pins.length)}</span>
+                </PanelSection>}
+
+                <button className="mini-action" type="button" onClick={handleSavePoints} disabled={!pins.length}>
+                  <Download size={13} />{t.pins.savePoints}
+                </button>
 
                 <PanelSection title={t.pins.styleTitle} icon={Palette}>
                   <div className="pin-style-group">

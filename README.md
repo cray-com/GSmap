@@ -14,7 +14,7 @@ export a **PNG**. The original experimental SVG exporter remains available.
   line widths, layer order and clipping are derived from the live map style,
   not a fixed re-styling
 - PNG export at 1×/2×/3×/4×, custom pixel dimensions, or A4/A3 at 300 DPI
-- A separate **Points & labels** menu for JSON/GeoJSON import and styling
+- A **Labels** menu with **JSON Data** and **Add on Map** modes
 - Optional click-to-add mode, undo and GeoJSON download
 - History of your last 5 searches, coordinates and selections (stored locally)
 - 100% open source, all dependencies and data sources are commercial-use
@@ -51,17 +51,19 @@ yarn preview
 
 ## Usage
 
-1. Search for a place by name, paste `lat, lon` and press Go, or just pan/zoom.
+1. The map starts in Vienna, Austria. Search for another place by name, paste `lat, lon` and press Go, or just pan/zoom.
 2. Hold **Shift** and drag a rectangle on the map.
 3. Fine-tune the selection: drag the handles on the edges/corners to resize,
    drag inside the box to move it, then click **Accept** (or **Revert** to
    undo your adjustments). Clicking an accepted selection re-opens editing.
 4. Pick a map style; optionally override the roads, buildings, and background
    colors. Toggle labels or buildings off if you want a cleaner export.
-5. Open **Points & labels**. Paste JSON or drop/upload `.json`/`.geojson` in **Pins**. Supported roots are the documented `{pins:[{lat,lon,...}], bounds?}`, GeoJSON `FeatureCollection` Point features (`[lon,lat]`), and top-level record arrays with case-insensitive `latitude/longitude`, `lat/lon`, or `lat/lng`. The detected format and coordinate fields are shown. Labels are selected as `label`, `name`, `title`, `project`, `location_name`, `id`; original properties are preserved. Loading JSON without `bounds` computes padded bounds from the pins and fits the map (a single pin is flown to at zoom 14).
+5. Open **Labels** and choose **JSON Data**. Paste JSON or drop/upload `.json`/`.geojson` in **Pins**. Supported roots are the documented `{pins:[{lat,lon,...}], bounds?}`, GeoJSON `FeatureCollection` Point features (`[lon,lat]`), and top-level record arrays with case-insensitive `latitude/longitude`, `lat/lon`, or `lat/lng`. The detected format and coordinate fields are shown. Labels are selected as `label`, `name`, `title`, `project`, `location_name`, `id`; original properties are preserved. Loading JSON without `bounds` computes padded bounds from the pins and fits the map (a single pin is flown to at zoom 14).
 6. Identical coordinates render as one native MapLibre circle; there is no spatial spreading. **Point style** controls radius, colors, stroke, opacity and optional square-root scaling of duplicate circles with a configurable cap. Labels use a separate native symbol layer: select a scalar property (with field coverage shown), position, size, colors, halo, overlap and an optional suffix showing the number of additional records. The first record supplies the label for aggregated duplicates. PNG includes both layers naturally; SVG remains unchanged and excludes user points and labels.
-7. For individual additions, enter an optional label and enable **Add by clicking**.
-   Click the map to add a point. Dragging, Shift and double-clicks do not add points.
+7. For individual additions, choose **Add on Map** in **Labels**. This activates
+   click creation. Enter the label text, then click the map to place it.
+   Labels are optional. Switching to **JSON Data** stops click creation without
+   clearing points or label text. Dragging, Shift and double-clicks do not add points.
    **Done** or Escape leaves the mode. **Undo point** removes the latest manual
    addition, not imported records. Use **Save points as GeoJSON** to keep your data;
    point data otherwise remains in this browser session. Loading another document
