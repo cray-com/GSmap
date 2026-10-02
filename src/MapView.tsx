@@ -2,9 +2,10 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "re
 import maplibregl, { Map as MlMap, LngLatBoundsLike } from "maplibre-gl";
 import type { BBox, Geometry, LayerKind, LngLat } from "./types";
 import { aggregatePins, displayPinLabel, type Pin } from "./pins";
-import { getStyleDef, type MapStyleId } from "./theme";
+import { createStyleVariant, getStyleDef, type MapStyleId } from "./theme";
 import type { StyledFeatureSet, StyledLayer, StyledPath } from "./svg";
 import { evaluatePaint, colorToCss, clearStyleResolveCache } from "./styleResolve";
+import { getPngSize, pngLayout, validatePngSize, validateDpi, setPngDpi, type PngSize, type PngExportOptions } from "./pngExport";
 
 export type MapHandle = {
   flyTo: (lng: number, lat: number, zoom?: number) => void;
@@ -13,7 +14,8 @@ export type MapHandle = {
   acceptEdit: () => void;
   revertEdit: () => void;
   getStyledFeatureSetForBbox: (bbox: BBox) => Promise<StyledFeatureSet | null>;
-  captureSelectedPng: (bbox: BBox, scale: 1 | 2 | 3 | 4) => Promise<Blob>;
+  captureSelectedPng: (bbox: BBox, options: PngExportOptions) => Promise<Blob>;
+  getPngSize: (bbox: BBox, scale: 1 | 2 | 3 | 4) => PngSize;
 };
 
 type EditLabels = {
@@ -34,6 +36,9 @@ type Props = {
   onAcceptSelection: (bbox: BBox) => void;
   pins: Pin[];
   pinStyle: PinStyleOptions;
+  pointCreation?: boolean;
+  onCreatePoint?: (point: { lat: number; lon: number }) => void;
+  pointCreationHint?: string;
 };
 
 // Pixel anchor (relative to the map container) used to position the
@@ -57,6 +62,9 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     onAcceptSelection,
     pins,
     pinStyle,
+    pointCreation = false,
+    onCreatePoint,
+    pointCreationHint,
   },
   ref,
 ) {
@@ -84,6 +92,12 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   pinsRef.current = pins;
   const pinStyleRef = useRef(pinStyle);
   pinStyleRef.current = pinStyle;
+
+  const pointCreationRef = useRef(pointCreation);
+  pointCreationRef.current = pointCreation;
+  const onCreatePointRef = useRef(onCreatePoint);
+  onCreatePointRef.current = onCreatePoint;
+  const exportingRef = useRef(false);
 
   const selectingRef = useRef(false);
   const startPxRef = useRef<{ x: number; y: number } | null>(null);
@@ -114,7 +128,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     editorRef.current = editor;
 
     const onMouseDown = (e: MouseEvent) => {
-      if (!e.shiftKey) return;
+      if (pointCreationRef.current || !e.shiftKey) return;
       e.preventDefault();
       e.stopPropagation();
       map.dragPan.disable();
@@ -165,6 +179,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
         boxElRef.current.remove();
         boxElRef.current = null;
       }
+      if (pointCreationRef.current) return;
       if (Math.abs(end.x - start.x) < 4 || Math.abs(end.y - start.y) < 4) {
         onSelectRef.current(null);
         return;
@@ -186,14 +201,14 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
 
     // Click an already-accepted selection to re-enter edit mode.
     const onSelectionClick = (e: maplibregl.MapLayerMouseEvent) => {
-      if (e.originalEvent.shiftKey || editor.isEditing() || !storedBbox) return;
+      if (pointCreationRef.current || e.originalEvent.shiftKey || editor.isEditing() || !storedBbox) return;
       editor.beginEdit(storedBbox);
     };
     map.on("click", SELECTION_FILL, onSelectionClick);
 
     // While editing, dragging over the box interior pans the whole selection.
     const onSelectionMouseDown = (e: maplibregl.MapLayerMouseEvent) => {
-      if (e.originalEvent.shiftKey || !editor.isEditing()) return;
+      if (pointCreationRef.current || e.originalEvent.shiftKey || !editor.isEditing()) return;
       e.preventDefault();
       editor.beginMove(e.originalEvent);
     };
@@ -201,15 +216,18 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
 
     // Cursor hint: pointer when clickable, grab while editing the box body.
     const onSelectionEnter = () => {
-      canvas.style.cursor = editor.isEditing() ? "grab" : "pointer";
+      canvas.style.cursor = pointCreationRef.current ? "crosshair" : editor.isEditing() ? "grab" : "pointer";
     };
     const onSelectionLeave = () => {
-      canvas.style.cursor = "";
+      canvas.style.cursor = pointCreationRef.current ? "crosshair" : "";
     };
     map.on("mouseenter", SELECTION_FILL, onSelectionEnter);
     map.on("mouseleave", SELECTION_FILL, onSelectionLeave);
 
     return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      boxElRef.current?.remove();
       canvas.removeEventListener("mousedown", onMouseDown);
       map.off("click", SELECTION_FILL, onSelectionClick);
       map.off("mousedown", SELECTION_FILL, onSelectionMouseDown);
@@ -222,6 +240,54 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // MapLibre filters navigation drags using clickTolerance; dragstart also
+  // catches drags that end where they started.
+  // ponytail: 500ms double-click window; use a confirm action if longer OS intervals matter.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !pointCreation) return;
+    editorRef.current?.endEdit();
+    const canvas = map.getCanvasContainer();
+    canvas.style.cursor = "crosshair";
+    const doubleClickEnabled = map.doubleClickZoom.isEnabled();
+    const boxZoomEnabled = map.boxZoom.isEnabled();
+    map.doubleClickZoom.disable();
+    map.boxZoom.disable();
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    let dragged = false;
+    const cancel = () => { clearTimeout(pending); pending = undefined; };
+    const press = () => { cancel(); dragged = false; };
+    const drag = () => { cancel(); dragged = true; };
+    const create = (event: maplibregl.MapMouseEvent) => {
+      cancel();
+      const e = event.originalEvent;
+      if (dragged || e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.detail > 1 ||
+          e.target !== map.getCanvas()) return;
+      const lat = event.lngLat.lat;
+      const lon = ((event.lngLat.lng + 180) % 360 + 360) % 360 - 180;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90) return;
+      pending = setTimeout(() => {
+        if (pointCreationRef.current) onCreatePointRef.current?.({ lat, lon });
+      }, 500);
+    };
+    map.on("mousedown", press);
+    map.on("dragstart", drag);
+    map.on("click", create);
+    map.on("dblclick", cancel);
+    map.on("movestart", cancel);
+    return () => {
+      cancel();
+      map.off("mousedown", press);
+      map.off("dragstart", drag);
+      map.off("click", create);
+      map.off("dblclick", cancel);
+      map.off("movestart", cancel);
+      canvas.style.cursor = "";
+      if (doubleClickEnabled) map.doubleClickZoom.enable();
+      if (boxZoomEnabled) map.boxZoom.enable();
+    };
+  }, [pointCreation]);
 
   // Swap style when the user picks a different map theme.
   useEffect(() => {
@@ -249,7 +315,7 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       );
     };
     map.on("idle", restoreOverlays);
-    map.setStyle(def.styleUrl);
+    map.setStyle(def.styleUrl, { transformStyle: (_previous, next) => createStyleVariant(next, styleId) });
     return () => {
       map.off("idle", restoreOverlays);
     };
@@ -352,10 +418,18 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       if (!map) return Promise.resolve(null);
       return buildStyledFeatureSetForBbox(map, bbox, editorRef.current);
     },
-    captureSelectedPng(bbox, scale) {
+    getPngSize(bbox, scale) {
       const map = mapRef.current;
-      if (!map) return Promise.reject(new Error("Map is not ready"));
-      return captureSelectedPng(map, bbox, scale, editorRef.current);
+      if (!map) throw new Error("Map is not ready");
+      return getPngSize(bbox, mapViewport(map), scale);
+    },
+    async captureSelectedPng(bbox, options) {
+      const map = mapRef.current;
+      if (!map) throw new Error("Map is not ready");
+      if (exportingRef.current) throw new Error("A PNG export is already running.");
+      exportingRef.current = true;
+      try { return await captureSelectedPng(map, bbox, options); }
+      finally { exportingRef.current = false; }
     },
   }));
 
@@ -363,7 +437,8 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     <div className="map-wrap">
       <div ref={containerRef} className="map" />
       <div className="help">
-        Hold <span className="kbd">Shift</span> and drag to select an area
+        {pointCreation ? (pointCreationHint ?? "Click the map to add a point") :
+          <>Hold <span className="kbd">Shift</span> and drag to select an area</>}
       </div>
       {editBarAnchor && (
         <div
@@ -831,6 +906,7 @@ class SelectionEditor {
     this.map.off("move", this.layout);
     if (onBboxRedrawn === this.layout) onBboxRedrawn = null;
     this.removeDragListeners();
+    if (this.activeRole || this.moveAnchor) this.map.dragPan.enable();
     this.destroyHandles();
     this.originalBbox = null;
     this.currentBbox = null;
@@ -1101,75 +1177,157 @@ async function withFramedBbox<T>(
   }
 }
 
-/**
- * Capture the selected bbox as a PNG, framed so off-screen selections render
- * fully before the canvas is cropped.
- */
-function captureSelectedPng(
-  map: MlMap,
-  bbox: BBox,
-  scale: 1 | 2 | 3 | 4,
-  editor: SelectionEditor | null,
-): Promise<Blob> {
-  return withFramedBbox(map, bbox, editor, () => {
-    const originalPixelRatio = window.devicePixelRatio;
-    const targetPixelRatio = originalPixelRatio * scale;
-    const hasSelectionLayers =
-      !!(map.getLayer(SELECTION_FILL) && map.getLayer(SELECTION_LINE));
+function mapViewport(map: MlMap): PngSize {
+  const container = map.getContainer();
+  return { width: container.clientWidth, height: container.clientHeight };
+}
 
-    const restoreRenderState = () => {
-      map.setPixelRatio(originalPixelRatio);
-      if (hasSelectionLayers) {
-        map.setLayoutProperty(SELECTION_FILL, "visibility", "visible");
-        map.setLayoutProperty(SELECTION_LINE, "visibility", "visible");
-      }
-    };
+function canvasGl(canvas: HTMLCanvasElement): WebGLRenderingContext | WebGL2RenderingContext {
+  const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+  if (!gl || gl.isContextLost()) throw new Error("PNG export failed: WebGL context is unavailable or lost.");
+  return gl;
+}
 
-    const crop = (): Promise<Blob> => {
-      const sourceCanvas = map.getCanvas();
-      // At targetPixelRatio the canvas physical size is scaled up; CSS crop
-      // coords stay in logical pixels so we scale them by the same ratio.
-      const cropRect = getCanvasCropForBbox(map, bbox);
-      const ratio = sourceCanvas.width / sourceCanvas.clientWidth;
-      const srcX = Math.round(cropRect.x * ratio);
-      const srcY = Math.round(cropRect.y * ratio);
-      const srcW = Math.max(1, Math.round(cropRect.width * ratio));
-      const srcH = Math.max(1, Math.round(cropRect.height * ratio));
+function checkExportBuffer(map: MlMap, size: PngSize) {
+  const canvas = map.getCanvas();
+  const gl = canvasGl(canvas);
+  if (canvas.width !== size.width || canvas.height !== size.height ||
+      gl.drawingBufferWidth !== size.width || gl.drawingBufferHeight !== size.height) {
+    throw new Error("The browser clamped the PNG rendering size. Choose a smaller output size.");
+  }
+}
 
-      const out = document.createElement("canvas");
-      out.width = srcW;
-      out.height = srcH;
-      const ctx = out.getContext("2d");
-      if (!ctx) return Promise.reject(new Error("Canvas export is not available"));
-      ctx.drawImage(sourceCanvas, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
-      drawPngAttribution(ctx, srcW, srcH, ratio);
-
-      restoreRenderState();
-
-      return new Promise<Blob>((resolve, reject) => {
-        out.toBlob((blob) => {
-          if (!blob) { reject(new Error("PNG export failed")); return; }
-          resolve(blob);
-        }, "image/png");
-      });
-    };
-
-    if (hasSelectionLayers) {
-      map.setLayoutProperty(SELECTION_FILL, "visibility", "none");
-      map.setLayoutProperty(SELECTION_LINE, "visibility", "none");
-    }
-
-    // Bump pixel ratio so MapLibre re-renders at the target resolution, then
-    // capture on the next rendered frame.
-    map.setPixelRatio(targetPixelRatio);
-    return new Promise<Blob>((resolve, reject) => {
-      map.once("render", () => crop().then(resolve, reject));
-      map.triggerRepaint();
-    }).catch((err) => {
-      restoreRenderState(); // Never leave the canvas at the bumped pixel ratio.
-      throw err;
-    });
+function beforeDeadline<T>(promise: Promise<T>, deadline: number, stage: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`PNG export timed out during ${stage}. Try a smaller size or check your connection.`)), Math.max(0, deadline - Date.now()));
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
   });
+}
+
+/** Two stable, fully loaded frames; missing tiles/glyphs and context loss fail, not partial exports. */
+function waitForExportRender(map: MlMap, deadline: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stable = 0;
+    const cleanup = () => {
+      clearTimeout(timer);
+      map.off("idle", idle);
+      map.off("render", render);
+      map.off("error", fail);
+      map.off("webglcontextlost", lost);
+    };
+    const fail = (event: { error: Error }) => { cleanup(); reject(new Error(`PNG resources could not load: ${event.error.message}`)); };
+    const lost = () => { cleanup(); reject(new Error("PNG export failed: WebGL context was lost. Choose a smaller size.")); };
+    const render = () => {
+      if (!map.loaded() || !map.areTilesLoaded() || map.isMoving()) { stable = 0; return; }
+      if (stable > 0 && ++stable >= 2) { cleanup(); resolve(); }
+    };
+    const idle = () => {
+      if (!map.loaded() || !map.areTilesLoaded()) return;
+      stable = 1;
+      map.triggerRepaint();
+    };
+    const timer = setTimeout(() => { cleanup(); reject(new Error("PNG resources did not finish loading in time. Check your connection or choose a smaller size.")); }, Math.max(0, deadline - Date.now()));
+    map.on("idle", idle);
+    map.on("render", render);
+    map.on("error", fail);
+    map.on("webglcontextlost", lost);
+    map.triggerRepaint();
+  });
+}
+
+/** Dedicated attached map: the live camera, editor and interaction state are untouched. */
+async function captureSelectedPng(map: MlMap, bbox: BBox, options: PngExportOptions): Promise<Blob> {
+  if (!map.isStyleLoaded()) throw new Error("Map style is still loading. Try PNG export again once it is ready.");
+  const size = typeof options === "number" ? getPngSize(bbox, mapViewport(map), options) : validatePngSize(options);
+  const dpi = typeof options === "number" ? undefined : options.dpi;
+  if (dpi !== undefined) validateDpi(dpi);
+  const layout = pngLayout(bbox, size);
+  // Query before any large allocations; MapLibre's default 4096 ceiling is not sufficient for A3.
+  const gl = canvasGl(map.getCanvas());
+  const viewportLimit = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array;
+  const limit = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+  const maxCanvasSize: [number, number] = [Math.min(limit, viewportLimit[0]), Math.min(limit, viewportLimit[1])];
+  if (layout.width > maxCanvasSize[0] || layout.height > maxCanvasSize[1]) {
+    throw new Error(`PNG map size exceeds this browser's WebGL limit (${maxCanvasSize.join(" × ")}). Choose a smaller size.`);
+  }
+  // getStyle serializes current GeoJSON data and every native paint/layout override.
+  const style = structuredClone(map.getStyle());
+  delete style.sources[SELECTION_SOURCE];
+  style.layers = style.layers.filter((layer) => layer.id !== SELECTION_FILL && layer.id !== SELECTION_LINE &&
+    !("source" in layer && layer.source === SELECTION_SOURCE));
+  style.transition = { duration: 0, delay: 0 };
+  const container = document.createElement("div");
+  container.style.cssText = `position:fixed;left:-100000px;top:0;width:${layout.width}px;height:${layout.height}px;pointer-events:none;`;
+  container.setAttribute("aria-hidden", "true");
+  document.body.appendChild(container);
+  const deadline = Date.now() + 60_000;
+  let exportMap: MlMap | undefined;
+  let out: HTMLCanvasElement | undefined;
+  let failure: Error | undefined;
+  const resourceFailed = (event: { error: Error }) => { failure = new Error(`PNG resources could not load: ${event.error.message}`); };
+  const contextLost = () => { failure = new Error("PNG export failed: WebGL context was lost. Choose a smaller size."); };
+  try {
+    exportMap = new maplibregl.Map({
+      container, style, center: layout.center, zoom: layout.zoom, bearing: 0, pitch: 0,
+      minZoom: -2, maxZoom: 24, interactive: false, attributionControl: false,
+      preserveDrawingBuffer: true, pixelRatio: 1, maxCanvasSize, fadeDuration: 0,
+      renderWorldCopies: true,
+    });
+    exportMap.on("error", resourceFailed);
+    exportMap.on("webglcontextlost", contextLost);
+    checkExportBuffer(exportMap, layout);
+    await waitForExportRender(exportMap, deadline);
+    checkExportBuffer(exportMap, layout);
+    // Guard camera constraints as well as buffer clamps: never silently crop a selection.
+    const sw = exportMap.project([bbox.west, bbox.south]);
+    const ne = exportMap.project([bbox.east, bbox.north]);
+    if (![sw.x, sw.y, ne.x, ne.y].every(Number.isFinite) || sw.x < -0.01 || sw.x > layout.width ||
+        ne.x > layout.width + 0.01 || ne.x < 0 || ne.y < -0.01 || ne.y > layout.height || sw.y > layout.height + 0.01 || sw.y < 0) {
+      throw new Error("PNG camera could not frame the entire selection. Change the size or selection.");
+    }
+    out = document.createElement("canvas");
+    out.width = size.width;
+    out.height = size.height;
+    const ctx = out.getContext("2d");
+    if (!ctx || out.width !== size.width || out.height !== size.height) throw new Error("The browser could not allocate the PNG canvas. Choose a smaller size.");
+    let background = "#ffffff";
+    for (const layer of style.layers) {
+      if (layer.type === "background" && layer.layout?.visibility !== "none") {
+        background = resolveLayerColor(exportMap, layer.id, "background-color", "background-opacity", layout.zoom, {}) ?? background;
+      }
+    }
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, size.width, size.height);
+    ctx.drawImage(exportMap.getCanvas(), layout.x, layout.y); // 1:1, no bitmap upscaling or stretching
+    drawPngAttribution(ctx, size.width, size.height, typeof options === "number" ? options : (dpi ?? 96) / 96);
+    let blob = await beforeDeadline(new Promise<Blob>((resolve, reject) => {
+      out!.toBlob((value) => value ? resolve(value) : reject(new Error("PNG encoding failed. Choose a smaller size.")), "image/png");
+    }), deadline, "encoding");
+    if (blob.type !== "image/png") throw new Error("The browser did not encode a PNG image.");
+    if (dpi !== undefined) blob = await beforeDeadline(setPngDpi(blob, dpi), deadline, "DPI metadata");
+    // Decode the real PNG, not just its IHDR: failed browser allocations/encoders must surface.
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    try {
+      image.src = url;
+      await beforeDeadline(image.decode(), deadline, "PNG verification");
+      if (image.naturalWidth !== size.width || image.naturalHeight !== size.height) {
+        throw new Error("PNG encoder returned incorrect dimensions. Choose a smaller size.");
+      }
+    } finally { image.src = ""; URL.revokeObjectURL(url); }
+    if (failure) throw failure;
+    checkExportBuffer(exportMap, layout);
+    return blob;
+  } finally {
+    try {
+      exportMap?.off("error", resourceFailed);
+      exportMap?.off("webglcontextlost", contextLost);
+      exportMap?.remove();
+    } finally {
+      container.remove();
+      if (out) { out.width = 0; out.height = 0; }
+    }
+  }
 }
 
 function drawPngAttribution(
