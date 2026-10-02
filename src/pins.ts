@@ -164,6 +164,26 @@ export function parsePinDocument(input: string): PinDocument {
   return { pins: parsed.pins.map(({ properties: _properties, ...pin }) => pin), ...(parsed.bounds ? { bounds: parsed.bounds } : {}) };
 }
 
+/** Manual additions use the same coordinate checks and selected label field as imports. */
+export function createManualPin(point: { lat: number; lon: number }, label: string, id: string, labelField = "label"): Pin {
+  const properties: Record<string, unknown> = { id, label };
+  if (labelField.toLowerCase() !== "id") properties[labelField] = label;
+  return makePin(properties, numberField(point.lat, "point.lat"), numberField(point.lon, "point.lon"), "point");
+}
+
+/** GeoJSON keeps mixed import formats and manually added points round-trippable. */
+export function pinsToGeoJson(pins: Pin[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: "FeatureCollection",
+    features: pins.map((pin) => ({
+      type: "Feature",
+      ...(pin.id ? { id: pin.id } : {}),
+      properties: { ...pin.properties, ...(pin.label !== undefined && pin.properties?.label === undefined ? { label: pin.label } : {}) },
+      geometry: { type: "Point", coordinates: [pin.lon, pin.lat] },
+    })),
+  };
+}
+
 export type AggregatedPin = Pin & { duplicateCount: number; duplicateScale: number };
 export function aggregatePins(pins: Pin[], maxScale = 3): AggregatedPin[] {
   const groups = new Map<string, Pin[]>();

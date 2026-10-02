@@ -8,20 +8,24 @@ GSmap wird als browserbasierte Kartenanwendung für Publishing-Arbeiten weiteren
 
 - React und TypeScript bilden Oberfläche und Zustand.
 - MapLibre rendert OpenFreeMap-Vektorkarten im Browser.
-- `src/MapView.tsx` besitzt Karteninteraktion, Auswahl und PNG-Aufnahme.
-- Datenparser bleiben von React und MapLibre getrennt und werden direkt getestet.
+- `src/MapView.tsx` besitzt Karteninteraktion, Auswahl und die separate PNG-Exportkarte.
+- PNG rendert einen Schnappschuss des aktuellen Kartenstils mitsamt Nutzerpunkten und Labels, ohne die Vorschau umzubauen.
+- Abweichende Ausgabeproportionen erhalten zentrierte Ränder statt Verzerrung oder zusätzlich exportiertem Kartengebiet.
+- Datenparser und Ausgabegrößen bleiben von React und MapLibre getrennt und werden direkt getestet.
 
 ## Aktueller Fokus
 
-Ausbaustufe 1:
+GSmap2 als erste veröffentlichbare Version abschließen:
 
-- Pins aus einem JSON-Objekt laden.
-- Optionale Pin-Beschriftungen unterstützen.
+- JSON/GeoJSON importieren, Punkte und Beschriftungen im eigenen Menü verwalten.
+- Einzelne Punkte in einem ausdrücklich aktivierten Klickmodus ergänzen und rückgängig machen.
 - Einen Ausschnitt interaktiv oder über JSON-Grenzen definieren.
-- Pins und Beschriftungen in Vorschau und PNG-Export erhalten.
-- PNG herunterladen.
+- PNG in festen Pixelgrößen sowie A4/A3 bei 300 DPI exportieren.
+- 1x–4x müssen echte unterschiedliche Abmessungen liefern, unabhängig vom Display-Pixelverhältnis.
+- Exportgröße vorab prüfen; bei Browser-/Grafiklimits Fehler statt still verkleinerter Ausgabe.
+- Export mit echten Browserchecks prüfen und eine aktualisierte Vorschau bereitstellen.
 
-Schrift- und Theme-Anpassungen gehören zu Ausbaustufe 2. Der bestehende SVG-Export bleibt vorerst unverändert.
+Der bestehende SVG-Export bleibt unverändert und wird als experimentell gekennzeichnet. Eigene Veröffentlichung und Pull Requests sind ein späterer Auftrag.
 
 ## JSON-Vertrag
 
@@ -52,8 +56,12 @@ Der Import läuft vollständig im Browser. Unterstützt werden der dokumentierte
 
 Identische Koordinaten werden zu einem Punkt aggregiert, ohne räumliche Verschiebung. Die native Circle-Layer-Größe kann optional mit `sqrt(duplicateCount)` skaliert werden und hat eine konfigurierbare Obergrenze; Labels skalieren nie. Eine separate native Symbol-Layer bietet die konfigurierbaren Beschriftungen. Optional kann das Label bei aggregierten Punkten die Anzahl zusätzlicher Datensätze als Suffix anzeigen. PNG enthält beide Layer, SVG bleibt unverändert und enthält keine Nutzerpunkte.
 
+## Zusätzliche Themes
+
+Monochrome, Warm Paper und Blueprint verwenden Positrons vorhandene Geometrie, Zoomregeln und Schriften mit lokalen Farbpaletten. Es werden keine weiteren Anbieter, API-Schlüssel oder Lizenzen benötigt. Nutzerfarben und Sichtbarkeitsschalter gelten weiterhin.
+
 ## Später
 
 - Kartenschriften und Pin-Typografie ersetzen.
-- Theme-Farben weiter anpassen.
-- Zusätzliche Druckformate und feste physische Ausgabegrößen prüfen.
+- Größere Poster bei nachgewiesenem Bedarf aus mehreren Teilbildern zusammensetzen.
+- Eigenständige öffentliche Veröffentlichung und getrennte Pull Requests prüfen.

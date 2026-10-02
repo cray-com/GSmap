@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import {
   aggregatePins,
   boundsFromPins,
+  createManualPin,
   displayPinLabel,
   getLabelFieldCoverage,
   getLabelFields,
   isPinFileName,
   parsePinDocument,
   parsePinInput,
+  pinsToGeoJson,
 } from "./pins";
 
 describe("parsePinDocument", () => {
@@ -85,6 +87,17 @@ describe("parsePinDocument", () => {
     expect(getLabelFieldCoverage(pins, "Name")).toBe(2);
     expect(getLabelFieldCoverage(pins, "name")).toBe(2);
     expect(getLabelFieldCoverage(pins, "z")).toBe(1);
+  });
+
+  it("validates clicked points and preserves mixed data through GeoJSON", () => {
+    const imported = parsePinInput('[{"LATITUDE":48.2,"LONGITUDE":16.3,"Name":"Original","source_ids":["old-1"]}]').pins;
+    const manual = createManualPin({ lat: 48.21, lon: 16.31 }, "Added", "manual-1", "Name");
+    const pins = [...imported, manual];
+    expect(displayPinLabel(aggregatePins([manual])[0], "name")).toBe("Added");
+    expect(parsePinInput(JSON.stringify(pinsToGeoJson(pins))).pins).toMatchObject(pins);
+    expect(createManualPin({ lat: 0, lon: 0 }, "Label", "manual-2", "ID").id).toBe("manual-2");
+    expect(() => createManualPin({ lat: NaN, lon: 0 }, "X", "x")).toThrow("finite number");
+    expect(() => createManualPin({ lat: 91, lon: 0 }, "X", "x")).toThrow("between -90 and 90");
   });
 
   it("builds labels from the first aggregated record", () => {

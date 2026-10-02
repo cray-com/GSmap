@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { LicensePage } from "./LicensePage";
@@ -35,9 +36,13 @@ import { StyleSelect } from "./StyleSelect";
 import { downloadBlob, downloadSvg, generateStyledSvg } from "./svg";
 import { DEFAULT_STYLE_ID, getStyleDef, type MapStyleId } from "./theme";
 import type { BBox } from "./types";
+import { PRINT_SIZES, type PngExportOptions } from "./pngExport";
 import {
   boundsFromPins,
+  createManualPin,
+  getLabelFields,
   getLabelFieldCoverage,
+  pinsToGeoJson,
   isPinFileName,
   parsePinInput,
   type Pin,
@@ -82,7 +87,7 @@ export function App() {
       : "app",
   );
   const [uiTheme, setUiTheme] = useState<UiTheme>(getInitialTheme);
-  const [panelTab, setPanelTab] = useState<"workspace" | "history">("workspace");
+  const [panelTab, setPanelTab] = useState<"workspace" | "pins" | "history">("workspace");
 
   const [styleId, setStyleId] = useState<MapStyleId>(DEFAULT_STYLE_ID);
   const [hideLabels, setHideLabels] = useState(false);
@@ -102,12 +107,19 @@ export function App() {
   const [recents, setRecents] = useState<RecentLocation[]>(() => loadRecents());
   const [exporting, setExporting] = useState(false);
   const [pngScale, setPngScale] = useState<1 | 2 | 3 | 4>(1);
+  const [pngPreset, setPngPreset] = useState<"scale" | "custom" | "a4" | "a3">("scale");
+  const [printLandscape, setPrintLandscape] = useState(false);
+  const [pngWidth, setPngWidth] = useState("2400");
+  const [pngHeight, setPngHeight] = useState("1600");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
   const [pinJson, setPinJson] = useState("");
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMetadata, setPinMetadata] = useState<PinMetadata | null>(null);
   const [pinStyle, setPinStyle] = useState<PinStyleOptions>(DEFAULT_PIN_STYLE);
+  const [pointCreation, setPointCreation] = useState(false);
+  const [newPointLabel, setNewPointLabel] = useState("");
+  const [manualPointIds, setManualPointIds] = useState<string[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -128,6 +140,19 @@ export function App() {
       // ignore storage failures so the app keeps rendering
     }
   }, [uiTheme]);
+
+  useEffect(() => {
+    if (panelTab !== "pins" || route !== "app") setPointCreation(false);
+  }, [panelTab, route]);
+
+  useEffect(() => {
+    if (!pointCreation) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPointCreation(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pointCreation]);
 
   // Record search/coordinate origins as they arrive. Plain map selections are
   // recorded only once the user accepts the edit (see handleAcceptSelection),
@@ -166,7 +191,7 @@ export function App() {
   const effectiveBuildingsColor = buildingsColor ?? getStyleDef(styleId).tokens.buildings;
   const effectiveBackgroundColor = backgroundColor ?? getStyleDef(styleId).tokens.background;
   const pinLabelOptions = useMemo(
-    () => (pinMetadata?.labelFields ?? []).map((field) => ({
+    () => getLabelFields(pins, pinMetadata?.coordinateFields ?? "lat/lon").map((field) => ({
       value: field,
       label: `${field} · ${getLabelFieldCoverage(pins, field)}/${pins.length}`,
     })),
@@ -233,6 +258,8 @@ export function App() {
     try {
       const document = parsePinInput(text);
       setPins(document.pins);
+      setManualPointIds([]);
+      setPointCreation(false);
       setPinMetadata(document.metadata);
       setPinStyle((current) => ({ ...current, labelField: document.metadata.labelField }));
       setPinJson(text);
@@ -278,11 +305,36 @@ export function App() {
 
   function handleClearPins() {
     setPins([]);
+    setManualPointIds([]);
+    setPointCreation(false);
     setPinMetadata(null);
     setPinJson("");
     setPinStyle((current) => ({ ...current, labelField: undefined }));
     setStatusMsg(null);
     setStatusError(false);
+  }
+
+  function handleCreatePoint(point: { lat: number; lon: number }) {
+    const label = newPointLabel.trim() || t.pins.newPoint(pins.length + 1);
+    const id = `manual-${crypto.getRandomValues(new Uint32Array(4)).join("-")}`;
+    const pin = createManualPin(point, label, id, pinStyle.labelField);
+    setPins((current) => [...current, pin]);
+    setManualPointIds((current) => [...current, id]);
+    if (!pinStyle.labelField) setPinStyle((current) => ({ ...current, labelField: "label" }));
+    setStatusMsg(null);
+    setStatusError(false);
+  }
+
+  function handleUndoPoint() {
+    const id = manualPointIds.at(-1);
+    if (!id) return;
+    setPins((current) => current.filter((pin) => pin.id !== id));
+    setManualPointIds((current) => current.slice(0, -1));
+  }
+
+  function handleSavePoints() {
+    const data = JSON.stringify(pinsToGeoJson(pins), null, 2);
+    downloadBlob(new Blob([data], { type: "application/geo+json" }), "gsmap2-points.geojson");
   }
 
   function handleClearSelection() {
@@ -357,7 +409,23 @@ export function App() {
     }
   }
 
-  async function handleExportPng(scale: 1 | 2 | 3 | 4) {
+  function getPngOptions(): PngExportOptions {
+    if (pngPreset === "scale") return pngScale;
+    if (pngPreset === "custom") return { width: Number(pngWidth), height: Number(pngHeight) };
+    const size = PRINT_SIZES[pngPreset];
+    return {
+      width: printLandscape ? size.height : size.width,
+      height: printLandscape ? size.width : size.height,
+      dpi: 300,
+    };
+  }
+
+  const pngOptions = getPngOptions();
+  const pngSize = typeof pngOptions === "number"
+    ? bbox ? mapRef.current?.getPngSize(bbox, pngOptions) : undefined
+    : pngOptions;
+
+  async function handleExportPng() {
     const map = mapRef.current;
     if (!map || !bbox) {
       setStatusMsg(t.export.selectAreaFirstPng);
@@ -365,10 +433,15 @@ export function App() {
       return;
     }
     setExporting(true);
+    setPointCreation(false);
+    setStatusMsg(t.export.exporting);
+    setStatusError(false);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     try {
-      const png = await map.captureSelectedPng(bbox, scale);
-      downloadBlob(png, `gsmap-selection-${stamp}@${scale}x.png`);
+      const options = getPngOptions();
+      const size = typeof options === "number" ? map.getPngSize(bbox, options) : options;
+      const png = await map.captureSelectedPng(bbox, options);
+      downloadBlob(png, `gsmap-selection-${stamp}-${size.width}x${size.height}.png`);
       setStatusMsg(null);
       setStatusError(false);
     } catch (err) {
@@ -392,6 +465,12 @@ export function App() {
             onClick={() => { setRoute("app"); setPanelTab("workspace"); window.location.hash = ""; }}
             icon={<LayoutGrid size={18} strokeWidth={1.9} />}
             label={t.nav.workspace}
+          />
+          <RailItem
+            active={route === "app" && panelTab === "pins"}
+            onClick={() => { setRoute("app"); setPanelTab("pins"); window.location.hash = ""; }}
+            icon={<MapPinned size={18} strokeWidth={1.9} />}
+            label={t.nav.pins}
           />
           <RailItem
             active={route === "app" && panelTab === "history"}
@@ -439,12 +518,12 @@ export function App() {
         <div className="panel-header">
           <div>
             <h1 className="panel-title">
-              {panelTab === "workspace" ? t.panel.workspace : t.panel.history}
+              {panelTab === "workspace" ? t.panel.workspace : panelTab === "pins" ? t.nav.pins : t.panel.history}
             </h1>
             <div className="panel-subtitle">
               {panelTab === "workspace"
                 ? t.panel.subtitleWorkspace
-                : t.panel.subtitleHistory(recents.length)}
+                : panelTab === "pins" ? t.panel.subtitlePins : t.panel.subtitleHistory(recents.length)}
             </div>
           </div>
         </div>
@@ -499,6 +578,9 @@ export function App() {
                   </form>
                 </PanelSection>
 
+            </>}
+
+            {panelTab === "pins" && <>
                 <PanelSection title={t.pins.sectionTitle} icon={MapPinned}>
                   <form className="stack-sm" onSubmit={handleLoadPins}>
                     <label className="field-label" htmlFor="pin-json">{t.pins.jsonLabel}</label>
@@ -514,7 +596,7 @@ export function App() {
                     </div>
                     <div className="pin-file-row">
                       <label className="mini-action pin-file-button" htmlFor="pin-file">{t.pins.chooseJson}</label>
-                      <input id="pin-file" type="file" accept=".json,.geojson,application/json,application/geo+json" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void handlePinFile(file); }} />
+                      <input id="pin-file" type="file" accept=".json,.geojson,application/json,application/geo+json" className="visually-hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void handlePinFile(file); e.target.value = ""; }} />
                       {pinMetadata && <span className="pin-meta">{pinMetadata.format} · {pinMetadata.coordinateFields}{pinMetadata.labelField ? ` · ${t.pins.detectedLabel}: ${pinMetadata.labelField}` : ""}</span>}
                     </div>
                     <div className="pin-actions">
@@ -523,6 +605,25 @@ export function App() {
                       <span className="pin-count">{t.pins.count(pins.length)}</span>
                     </div>
                   </form>
+                </PanelSection>
+
+                <PanelSection title={t.pins.createTitle} icon={MapPinned}>
+                  <label className="field-group" htmlFor="new-point-label">
+                    <span className="field-label">{t.pins.nextLabel}</span>
+                    <input id="new-point-label" className="input" value={newPointLabel} onChange={(e) => setNewPointLabel(e.target.value)} placeholder={t.pins.optionalLabel} maxLength={200} />
+                  </label>
+                  <div className="pin-actions pin-create-actions">
+                    <button className={"mini-action" + (pointCreation ? " mini-action--accent" : "")} type="button" aria-pressed={pointCreation} onClick={() => setPointCreation((current) => !current)} disabled={exporting}>
+                      {pointCreation ? t.pins.stopCreating : t.pins.startCreating}
+                    </button>
+                    <button className="mini-action" type="button" onClick={handleUndoPoint} disabled={!manualPointIds.length || exporting}>
+                      <Undo2 size={13} />{t.pins.undoPoint}
+                    </button>
+                  </div>
+                  <p className="control-hint">{pointCreation ? t.pins.createHint : t.pins.createDescription}</p>
+                  <button className="mini-action" type="button" onClick={handleSavePoints} disabled={!pins.length}>
+                    <Download size={13} />{t.pins.savePoints}
+                  </button>
                 </PanelSection>
 
                 <PanelSection title={t.pins.styleTitle} icon={Palette}>
@@ -581,6 +682,9 @@ export function App() {
                   </div>
                 </PanelSection>
 
+            </>}
+
+            {panelTab === "workspace" && <>
                 <PanelSection
                   title={t.selection.sectionTitle}
                   icon={MapPinned}
@@ -807,9 +911,9 @@ export function App() {
               </span>
             </div>
             <button
-              className="btn btn-primary export-primary"
+              className="btn btn-primary export-primary export-png-btn"
               type="button"
-              onClick={handleExportSvgLocal}
+              onClick={handleExportPng}
               disabled={exporting || !bbox}
             >
               {exporting ? (
@@ -819,34 +923,46 @@ export function App() {
                 </>
               ) : (
                 <>
-                  <Download size={15} strokeWidth={2} />
-                  {t.export.localSvg}
+                  <ImageDown size={15} strokeWidth={2} />
+                  {t.export.exportPng}
                 </>
               )}
             </button>
-            <div className="export-png-row">
-              <button
-                className="btn export-chip export-png-btn"
-                type="button"
-                onClick={() => handleExportPng(pngScale)}
-                disabled={exporting || !bbox}
-              >
-                <ImageDown size={13} strokeWidth={2} />
-                {t.export.exportPng}
-              </button>
-              <select
-                className="select export-png-scale"
-                value={pngScale}
-                onChange={(e) => setPngScale(Number(e.target.value) as 1 | 2 | 3 | 4)}
-                disabled={exporting || !bbox}
-                aria-label={t.export.pngAriaLabel}
-              >
-                <option value={1}>1x</option>
-                <option value={2}>2x</option>
-                <option value={3}>3x</option>
-                <option value={4}>4x</option>
-              </select>
-            </div>
+            <details className="png-options">
+              <summary>{t.export.pngSize}{pngSize ? ` · ${pngSize.width} × ${pngSize.height} px` : ""}</summary>
+              <div className="stack-sm">
+                <label className="field-group" htmlFor="png-preset">
+                  <span className="field-label">{t.export.sizeMode}</span>
+                  <select id="png-preset" className="select" value={pngPreset} onChange={(e) => setPngPreset(e.target.value as typeof pngPreset)} disabled={exporting}>
+                    <option value="scale">{t.export.quickScale}</option>
+                    <option value="custom">{t.export.customSize}</option>
+                    <option value="a4">A4 · 300 DPI</option>
+                    <option value="a3">A3 · 300 DPI</option>
+                  </select>
+                </label>
+                {pngPreset === "scale" && <label className="field-group">
+                  <span className="field-label">{t.export.pngAriaLabel}</span>
+                  <select className="select export-png-scale" value={pngScale} onChange={(e) => setPngScale(Number(e.target.value) as 1 | 2 | 3 | 4)} disabled={exporting}>
+                    <option value={1}>1x</option><option value={2}>2x</option><option value={3}>3x</option><option value={4}>4x</option>
+                  </select>
+                </label>}
+                {pngPreset === "custom" && <div className="pin-control-grid">
+                  <label className="field-group" htmlFor="png-width"><span className="field-label">{t.export.widthPx}</span><input id="png-width" className="input" type="number" min={1} step={1} value={pngWidth} onChange={(e) => setPngWidth(e.target.value)} disabled={exporting} /></label>
+                  <label className="field-group" htmlFor="png-height"><span className="field-label">{t.export.heightPx}</span><input id="png-height" className="input" type="number" min={1} step={1} value={pngHeight} onChange={(e) => setPngHeight(e.target.value)} disabled={exporting} /></label>
+                </div>}
+                {(pngPreset === "a4" || pngPreset === "a3") && <label className="field-group">
+                  <span className="field-label">{t.export.orientation}</span>
+                  <select id="png-orientation" className="select" value={printLandscape ? "landscape" : "portrait"} onChange={(e) => setPrintLandscape(e.target.value === "landscape")} disabled={exporting}>
+                    <option value="portrait">{t.export.portrait}</option><option value="landscape">{t.export.landscape}</option>
+                  </select>
+                </label>}
+                <p className="control-hint">{pngPreset === "scale" ? t.export.scaleHint : t.export.fitHint}</p>
+              </div>
+            </details>
+            <button className="mini-action export-svg-btn" type="button" onClick={handleExportSvgLocal} disabled={exporting || !bbox}>
+              <Download size={13} />{t.export.localSvg}
+            </button>
+            <p className="control-hint">{t.export.svgHint}</p>
             {statusMsg && (
               <div
                 className={"status export-status" + (statusError ? " status-error" : "")}
@@ -888,6 +1004,9 @@ export function App() {
           onAcceptSelection={handleAcceptSelection}
           pins={pins}
           pinStyle={pinStyle}
+          pointCreation={pointCreation && !exporting}
+          onCreatePoint={handleCreatePoint}
+          pointCreationHint={t.pins.createHint}
         />
       )}
       <AnimatePresence mode="wait">
@@ -990,6 +1109,7 @@ function RailItem({ active, onClick, icon, label }: RailItemProps) {
     <motion.button
       type="button"
       className={"rail-item" + (active ? " rail-item-active" : "")}
+      aria-current={active ? "page" : undefined}
       onClick={onClick}
       whileHover={{ y: -1 }}
       whileTap={{ y: 1 }}

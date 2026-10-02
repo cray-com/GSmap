@@ -411,6 +411,13 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   align-items: center;
   gap: 8px;
 }
+.pin-create-actions { flex-wrap: wrap; }
+.control-hint { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.pin-file-row:focus-within .pin-file-button { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pin-count {
   margin-left: auto;
   color: var(--text-soft);
@@ -556,9 +563,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: all var(--d-fast) var(--ease-out);
+  transition: background var(--d-fast) var(--ease-out),
+              border-color var(--d-fast) var(--ease-out),
+              color var(--d-fast) var(--ease-out);
 }
-.mini-action:hover {
+.mini-action:disabled { opacity: 0.42; cursor: not-allowed; }
+.mini-action:hover:not(:disabled) {
   border-color: var(--input-border-hover);
   background: var(--panel-hover);
   color: var(--text);
@@ -1102,38 +1112,15 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   box-shadow: none;
 }
 
-.export-png-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.export-png-btn {
-  flex: 1;
-  min-height: 34px;
-  padding: 6px 10px;
-  font-size: 11.5px;
-  font-weight: 500;
-  background: var(--bg-sunken);
-  border-color: var(--input-border);
-  color: var(--text-muted);
-}
-.export-png-btn:hover:not(:disabled) {
-  background: var(--panel-hover);
-  color: var(--text);
-  border-color: var(--input-border);
-}
-.export-png-scale {
-  width: 56px;
-  min-height: 34px;
-  font-size: 11.5px;
-  padding: 4px 6px;
-}
+.png-options { font-size: 11.5px; color: var(--text-muted); }
+.png-options summary { cursor: pointer; padding: 4px 0; }
+.png-options[open] > .stack-sm { margin-top: 10px; }
+.export-svg-btn { width: 100%; }
 .export-status {
   width: 100%;
   min-height: 28px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   justify-content: flex-start;
   font-size: 11.5px;
 }
@@ -1734,8 +1721,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
   /* Field/Export tighter */
   .input, .select, .btn { min-height: 36px; font-size: 12.5px; }
   .export-primary { min-height: 40px; }
-  .export-png-btn { font-size: 11px; min-height: 32px; }
-  .export-png-scale { min-height: 32px; font-size: 11px; }
+  .png-options[open] > .stack-sm { max-height: 22vh; overflow-y: auto; padding: 2px 4px; }
 
   /* Recents: hide meta pill to save horizontal room */
   .recent-item {
