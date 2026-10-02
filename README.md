@@ -1,8 +1,8 @@
 # GSmap
 
 Open source web app for selecting an area of an OpenStreetMap-based map and
-exporting it as a real, editable vector **SVG** ready for any design or
-illustration tool.
+exporting supported map geometry as editable vector **SVG** for design and
+illustration tools. For a rendered map including text labels and icons, use PNG.
 
 - Search by place name (Nominatim) or by coordinates
 - Pan/zoom the map and select a rectangular area (Shift + drag)
@@ -10,9 +10,9 @@ illustration tool.
   drag the interior to move, then **Accept** or **Revert**
 - Five map styles (Positron, Dark, Liberty, Bright, Fiord) with per-style
   overrides for **roads**, **buildings**, and **background** colors
-- Export a high-fidelity SVG that mirrors what you see on screen — colors,
-  line widths, layer order and clipping are derived from the live map style,
-  not a fixed re-styling
+- Export editable SVG geometry with colors, line widths, layer order and
+  clipping derived from the live map style. Text labels and icons are not
+  included; some paint effects are approximated.
 - Export a PNG raster of the selection (1×/2×/3×)
 - History of your last 5 searches, coordinates and selections (stored locally)
 - 100% open source, all dependencies and data sources are commercial-use
@@ -58,8 +58,14 @@ yarn preview
    colors. Toggle labels or buildings off if you want a cleaner export.
 5. Click **Local SVG** to download the vector export, or **Export PNG** for a
    raster image.
-6. Open the SVG in your vector editor of choice. Each map-style layer is a
-   separate `<g>` so you can edit them independently.
+6. Open the SVG in your vector editor of choice. Each supported map-style layer
+   is a separate `<g>` so you can edit them independently.
+
+SVG is a partial reconstruction, not a complete copy of the rendered map.
+`symbol` layers, including place/street labels and POI icons, are omitted.
+Pattern fills/lines use solid-color fallbacks, and data-driven paint is
+approximated per layer. Choose PNG when text, icons and the rendered appearance
+matter. See [Notes & limitations](#notes--limitations) for details.
 
 ## SVG structure
 
@@ -83,7 +89,8 @@ result is one `<g>` per style layer, clipped to the exact selection rectangle:
 ```
 
 Geometry is projected with the same projection as the on-screen map (screen
-pixels), so stroke widths map 1:1 and the SVG matches the preview.
+pixels). Supported geometry follows the preview, subject to the layer and paint
+limitations below.
 
 ## Licensing & attribution
 
